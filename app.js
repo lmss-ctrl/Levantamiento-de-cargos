@@ -680,10 +680,16 @@ function csvEscape(value) {
 }
 
 function downloadCsvFile(filename, content) {
-  var encoder = new TextEncoder();
-  var bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-  var body = encoder.encode(normalizeUtf8Text(content));
-  var blob = new Blob([bom, body], {type:'text/csv;charset=utf-8;'});
+  var text = normalizeUtf8Text(content);
+  var buffer = new Uint8Array(2 + text.length * 2);
+  buffer[0] = 0xFF;
+  buffer[1] = 0xFE;
+  for (var i = 0; i < text.length; i++) {
+    var code = text.charCodeAt(i);
+    buffer[2 + i * 2] = code & 0xFF;
+    buffer[3 + i * 2] = code >> 8;
+  }
+  var blob = new Blob([buffer], {type:'text/csv;charset=utf-16;'});
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url;
