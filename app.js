@@ -171,7 +171,7 @@ async function loadExpedientes() {
         </td>
         <td class="px-5 py-3 text-xs text-zinc-400">${exp.ultima_interaccion||"—"}</td>
       
-        <td class="px-5 py-3">${exp.estado==="Cerrado"?'<button data-codigo="'+exp.codigo+'" onclick="exportarExpediente(this.dataset.codigo)" style="background:#9333ea;color:#fff;border:none;cursor:pointer;padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600">&#8595; PDF</button> <button data-codigo=\"${exp.codigo}\" onclick=\"exportarCSV(this.dataset.codigo)\" style=\"background:#0891b2;color:#fff;border:none;cursor:pointer;padding:5px 10px;border-radius:8px;font-size:12px;font-weight:600\">â†“ CSV</button>':'&mdash;'}</td></tr>`;
+        <td class="px-5 py-3">${exp.estado==="Cerrado"?'<button data-codigo="'+exp.codigo+'" onclick="exportarExpediente(this.dataset.codigo, this)" style="background:#9333ea;color:#fff;border:none;cursor:pointer;padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600">&#8595; PDF</button> <button data-codigo=\"'+exp.codigo+'\" onclick=\"exportarCSV(this.dataset.codigo, this)\" style=\"background:#0891b2;color:#fff;border:none;cursor:pointer;padding:5px 10px;border-radius:8px;font-size:12px;font-weight:600\">&#8595; CSV</button>':'&mdash;'}</td></tr>`;
     }).join("");
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-8 text-center text-sm text-red-400">Error: ${e.message}</td></tr>`;
@@ -512,17 +512,68 @@ document.addEventListener("keydown", e => {
 
 
 
-window.exportarExpediente = function(codigo) {
-  var btn=event.currentTarget, orig=btn.innerHTML;
-  btn.innerHTML='Procesando...'; btn.disabled=true;
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function csvEscape(value) {
+  var s = String(value == null ? "" : value);
+  if (/[",\r\n]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function collectExportRows(data) {
+  var rows = [];
+  var exp = data.expediente || {};
+  var ent = data.entregables || {};
+  var resp = data.respuestas || [];
+
+  Object.keys(exp).forEach(function(key) {
+    rows.push({ section: "Expediente", field: key, value: exp[key] });
+  });
+
+  Object.keys(ent).forEach(function(key) {
+    rows.push({ section: "Entregables", field: key, value: ent[key] });
+  });
+
+  if (Array.isArray(resp) && resp.length) {
+    resp.forEach(function(item, index) {
+      rows.push({
+        section: "Respuestas",
+        field: (item.id_pregunta || ("P" + (index + 1))) + " - " + (item.pregunta || "Pregunta"),
+        value: item.respuesta || ""
+      });
+    });
+  }
+
+  return rows;
+}
+
+window.exportarExpediente = function(codigo, btnEl) {
+  var btn = btnEl || null, orig = btn ? btn.innerHTML : "";
+  if (btn) { btn.innerHTML = 'Procesando...'; btn.disabled = true; }
   postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
   .then(function(d){
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
-    var exp=d.expediente||{},ent=d.entregables||{};
+    var exp=d.expediente||{},ent=d.entregables||{}, rows=collectExportRows(d);
     var now=new Date().toLocaleDateString('es-CO',{year:'numeric',month:'long',day:'numeric'});
-    function row(l,v){if(!v&&v!==0)return '';return '<tr><td style=font-weight:600;color:#52525b;width:180px;padding:6px 12px>'+l+'</td><td style=padding:6px 12px>'+v+'</td></tr>';}
-    function sec(t,b){if(!b)return '';return '<div style=margin-top:20px><h3 style=font-size:14px;font-weight:700;color:#7c3aed;border-bottom:2px solid #ede9fe;padding-bottom:5px;margin-bottom:8px>'+t+'</h3><p style=font-size:13px;line-height:1.8;white-space:pre-wrap;margin:0>'+b+'</p></div>';}
-    var htm='<!DOCTYPE html><html><head><meta charset=UTF-8><title>Reporte '+exp.codigo+'</title>';
+    function row(l,v){if(!v&&v!==0)return '';return '<tr><td style="font-weight:600;color:#52525b;width:220px;padding:6px 12px;vertical-align:top">'+escapeHtml(l)+'</td><td style="padding:6px 12px;white-space:pre-wrap">'+escapeHtml(v)+'</td></tr>';}
+    function sec(t,b){if(!b)return '';return '<div style="margin-top:20px"><h3 style="font-size:14px;font-weight:700;color:#7c3aed;border-bottom:2px solid #ede9fe;padding-bottom:5px;margin-bottom:8px">'+escapeHtml(t)+'</h3><p style="font-size:13px;line-height:1.8;white-space:pre-wrap;margin:0">'+escapeHtml(b)+'</p></div>';}
+    function rowsTable(title, list) {
+      if (!list.length) return '';
+      var html = '<div style="margin-top:20px"><h3 style="font-size:14px;font-weight:700;color:#7c3aed;border-bottom:2px solid #ede9fe;padding-bottom:5px;margin-bottom:8px">' + escapeHtml(title) + '</h3><table>';
+      html += list.map(function(item){ return row(item.field, item.value); }).join('');
+      html += '</table></div>';
+      return html;
+    }
+    var htm='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reporte '+escapeHtml(exp.codigo||codigo)+'</title>';
     htm+='<style>body{font-family:Arial,sans-serif;padding:32px;color:#18181b;margin:0}';
     htm+='.h{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;padding:22px 28px;border-radius:12px;margin-bottom:18px}';
     htm+='.h h1{font-size:20px;font-weight:700;margin:0 0 4px}.h p{margin:0;opacity:.85;font-size:13px}';
@@ -532,7 +583,7 @@ window.exportarExpediente = function(codigo) {
     htm+='footer{margin-top:28px;font-size:11px;color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}';
     htm+='@media print{.h{-webkit-print-color-adjust:exact;print-color-adjust:exact}}';
     htm+='</style></head><body>';
-    htm+='<div class=h><h1>Levantamiento de Cargo</h1><p>'+(exp.cargo||'-')+' &middot; '+exp.codigo+' &middot; '+now+'</p></div>';
+    htm+='<div class="h"><h1>Levantamiento de Cargo</h1><p>'+escapeHtml(exp.cargo||'-')+' &middot; '+escapeHtml(exp.codigo||codigo)+' &middot; '+escapeHtml(now)+'</p></div>';
     htm+='<h2>Datos del Colaborador</h2><table>';
     htm+=row('Nombre',exp.nombre)+row('Cargo',exp.cargo)+row('Área',exp.area);
     htm+=row('Jefe inmediato',exp.jefe_inmediato)+row('Ubicación',exp.ubicacion);
@@ -546,27 +597,37 @@ window.exportarExpediente = function(codigo) {
     htm+=sec('Requisitos del Cargo',ent.requisitos);
     htm+=sec('Indicadores de Gestión',ent.indicadores);
     htm+=sec('Recomendaciones Finales',ent.recomendaciones_finales);
+    htm+=rowsTable('Datos completos exportados', rows);
     htm+='<footer>Generado por LM Smart Solutions</footer>';
     htm+='</body></html>';
     var blob=new Blob([htm],{type:'text/html;charset=utf-8'});
-    var url='data:text/html;charset=utf-8;base64,'+btoa(unescape(encodeURIComponent(htm)));
-    window.open(url,'_blank');
+    var url=URL.createObjectURL(blob);
+    var w=window.open(url,'_blank');
+    if(!w){
+      alert('El navegador bloqueó la vista imprimible. Permite popups e inténtalo de nuevo.');
+      return;
+    }
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
   }).catch(function(e){alert('Error PDF: '+e.message);})
-  .finally(function(){btn.innerHTML=orig;btn.disabled=false;});
+  .finally(function(){ if (btn) { btn.innerHTML=orig; btn.disabled=false; } });
 };
 
-window.exportarCSV = function(codigo) {
-  var btn=event.currentTarget, orig=btn.innerHTML;
-  btn.innerHTML='Exportando...'; btn.disabled=true;
+window.exportarCSV = function(codigo, btnEl) {
+  var btn = btnEl || null, orig = btn ? btn.innerHTML : "";
+  if (btn) { btn.innerHTML='Exportando...'; btn.disabled=true; }
   postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
   .then(function(d){
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
-    var exp=d.expediente||{},ent=d.entregables||{};
-    var q=String.fromCharCode(34);
-    function esc(v){var s=String(v==null?'':v);if(s.indexOf(',')>=0||s.indexOf(q)>=0){return q+s.split(q).join(q+q)+q;}return s;}
-    var h=['Codigo','Nombre','Cargo','Area','Jefe Inmediato','Ubicacion','Tiempo en Cargo','Nivel del Cargo','Personal a Cargo','Estado','Progreso','Ultima Interaccion','Perfil Seleccion','Descripcion Cargo','Requisitos','Indicadores','Recomendaciones'];
-    var r=[esc(exp.codigo),esc(exp.nombre),esc(exp.cargo),esc(exp.area),esc(exp.jefe_inmediato),esc(exp.ubicacion),esc(exp.tiempo_cargo),esc(exp.nivel),esc(exp.tiene_personal?'Si':'No'),esc(exp.estado),esc(exp.progreso),esc(exp.ultima_interaccion),esc(ent.perfil_seleccion),esc(ent.descripcion_cargo),esc(ent.requisitos),esc(ent.indicadores),esc(ent.recomendaciones_finales)];
-    var csv=h.join(',')+String.fromCharCode(13,10)+r.join(',');
+    var rows = collectExportRows(d);
+    var header = ['Seccion','Campo','Valor'];
+    var body = rows.map(function(item){
+      return [
+        csvEscape(item.section),
+        csvEscape(item.field),
+        csvEscape(item.value)
+      ].join(',');
+    });
+    var csv='\uFEFF'+header.join(',')+String.fromCharCode(13,10)+body.join(String.fromCharCode(13,10));
     var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');
@@ -574,7 +635,7 @@ window.exportarCSV = function(codigo) {
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
   }).catch(function(e){alert('Error CSV: '+e.message);})
-  .finally(function(){btn.innerHTML=orig;btn.disabled=false;});
+  .finally(function(){ if (btn) { btn.innerHTML=orig; btn.disabled=false; } });
 };
 
 showScreen("Login");
