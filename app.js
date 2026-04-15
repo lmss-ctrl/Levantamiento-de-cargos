@@ -653,7 +653,7 @@ function escapeHtml(value) {
 
 function csvEscape(value) {
   var s = String(value == null ? "" : value);
-  if (/[",\r\n]/.test(s)) {
+  if (/[";\r\n]/.test(s)) {
     return '"' + s.replace(/"/g, '""') + '"';
   }
   return s;
@@ -781,15 +781,16 @@ window.exportarCSV = function(codigo, btnEl) {
   .then(function(d){
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
     var rows = collectExportRows(d);
+    var separator = ';';
     var header = ['Seccion','Campo','Valor'];
     var body = rows.map(function(item){
       return [
         csvEscape(item.section),
         csvEscape(item.field),
         csvEscape(item.value)
-      ].join(',');
+      ].join(separator);
     });
-    var csv='\uFEFF'+header.join(',')+String.fromCharCode(13,10)+body.join(String.fromCharCode(13,10));
+    var csv='\uFEFFsep='+separator+String.fromCharCode(13,10)+header.join(separator)+String.fromCharCode(13,10)+body.join(String.fromCharCode(13,10));
     var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');
