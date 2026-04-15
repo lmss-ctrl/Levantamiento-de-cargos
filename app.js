@@ -667,12 +667,31 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function normalizeUtf8Text(value) {
+  return String(value == null ? "" : value).normalize("NFC");
+}
+
 function csvEscape(value) {
-  var s = String(value == null ? "" : value);
+  var s = normalizeUtf8Text(value);
   if (/[";\r\n]/.test(s)) {
     return '"' + s.replace(/"/g, '""') + '"';
   }
   return s;
+}
+
+function downloadCsvFile(filename, content) {
+  var encoder = new TextEncoder();
+  var bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+  var body = encoder.encode(normalizeUtf8Text(content));
+  var blob = new Blob([bom, body], {type:'text/csv;charset=utf-8;'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
 }
 
 function collectExportRows(data) {
@@ -815,13 +834,8 @@ window.exportarCSV = function(codigo, btnEl) {
         csvEscape(item.value)
       ].join(separator);
     });
-    var csv='\uFEFFsep='+separator+String.fromCharCode(13,10)+header.join(separator)+String.fromCharCode(13,10)+body.join(String.fromCharCode(13,10));
-    var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
-    var url=URL.createObjectURL(blob);
-    var a=document.createElement('a');
-    a.href=url; a.download='expediente_'+codigo+'.csv';
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
+    var csv='sep='+separator+String.fromCharCode(13,10)+header.join(separator)+String.fromCharCode(13,10)+body.join(String.fromCharCode(13,10));
+    downloadCsvFile('expediente_'+codigo+'.csv', csv);
   }).catch(function(e){alert('Error CSV: '+e.message);})
   .finally(function(){ if (btn) { btn.innerHTML=orig; btn.disabled=false; } });
 };
