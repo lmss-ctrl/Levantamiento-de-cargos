@@ -1,0 +1,581 @@
+﻿const WEBHOOK_URL   = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos";
+const WEBHOOK_AUTH  = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos-auth";
+const WEBHOOK_ADMIN = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos-admin";
+
+const PHASES = [
+  { label:"Datos básicos",          range:[1,9],   eta:"~3 min" },
+  { label:"Objetivo del cargo",     range:[10,12], eta:"~2 min" },
+  { label:"Funciones",              range:[13,18], eta:"~3 min" },
+  { label:"Tiempos y carga",        range:[19,27], eta:"~4 min" },
+  { label:"Responsabilidades",      range:[28,31], eta:"~2 min" },
+  { label:"Relaciones",             range:[32,37], eta:"~2 min" },
+  { label:"Autoridad",              range:[38,41], eta:"~2 min" },
+  { label:"Perfil",                 range:[42,46], eta:"~2 min" },
+  { label:"Competencias",           range:[47,50], eta:"~2 min" },
+  { label:"Indicadores",            range:[51,53], eta:"~2 min" },
+  { label:"Dificultades y mejoras", range:[54,59], eta:"~3 min" },
+  { label:"Cierre",                 range:[60,61], eta:"~1 min" },
+];
+
+const appState = {
+  rol:"", tokenSesion:"",
+  identificadorColaborador:"", codigoExpediente:"",
+  preguntaActualId:"", preguntaActualTexto:"",
+  preguntaAyuda:"", preguntaTipo:"Texto largo", preguntaOpciones:[],
+  progreso:0, estadoExpediente:"", resumenIA:"",
+  cargo:"", area:"", jefeInmediato:"", nombreEntrevistado:""
+};
+
+/* ── Screens ── */
+const SCREENS = ["Login","Interview","Final","Admin"];
+function showScreen(name) {
+  SCREENS.forEach(s => {
+    const el = document.getElementById("screen"+s);
+    if (el) el.classList.add("hidden");
+  });
+  document.getElementById("screen"+name).classList.remove("hidden");
+}
+
+/* ── Messages ── */
+function renderMessage(boxId, type, text) {
+  const box = document.getElementById(boxId);
+  if (!box) return;
+  if (!text) { box.className = "hidden"; box.textContent = ""; return; }
+  box.className = "msg-" + type;
+  box.textContent = text;
+  box.classList.remove("hidden");
+}
+
+/* ── HTTP ── */
+async function postJson(url, payload) {
+  const headers = {"Content-Type":"application/json"};
+  if (appState.tokenSesion) headers["X-Session-Token"] = appState.tokenSesion;
+  const res = await fetch(url, {method:"POST", headers, body:JSON.stringify(payload)});
+  const text = await res.text();
+  if (!text) throw new Error("Respuesta vacía del servidor");
+  try { return JSON.parse(text); } catch { throw new Error("Respuesta no válida del servidor"); }
+}
+
+/* ── Role selection ── */
+function selectRole(rol) {
+  appState.rol = rol;
+  document.querySelectorAll(".role-card").forEach(c => c.classList.remove("selected"));
+  document.querySelector(`[data-role="${rol}"]`)?.classList.add("selected");
+  document.getElementById("loginColaborador").classList.add("hidden");
+  document.getElementById("loginPassword").classList.add("hidden");
+  renderMessage("boxLoginMessage","","");
+  if (rol === "colaborador") {
+    document.getElementById("loginColaborador").classList.remove("hidden");
+    document.getElementById("txtLoginCedula").focus();
+  } else {
+    document.getElementById("loginPassword").classList.remove("hidden");
+    document.getElementById("txtLoginPassword").focus();
+  }
+}
+
+/* ── Login colaborador ── */
+async function loginColaborador() {
+  const cedula = document.getElementById("txtLoginCedula").value.trim();
+  if (!cedula) { renderMessage("boxLoginMessage","warning","Ingresa tu número de identificación."); return; }
+  if (!/^\d{4,15}$/.test(cedula)) { renderMessage("boxLoginMessage","warning","El número de identificación debe contener solo dígitos (4 a 15)."); return; }
+  appState.identificadorColaborador = cedula;
+  renderMessage("boxLoginMessage","info","Consultando entrevista...");
+  try {
+    const data = await postJson(WEBHOOK_URL, {accion:"iniciar_o_retomar", identificador_colaborador:cedula});
+    if (!data.ok) { renderMessage("boxLoginMessage","error", data.mensaje||"No se pudo iniciar la entrevista."); return; }
+    applyState(data);
+    renderInterviewView();
+    showScreen("Interview");
+  } catch(e) { renderMessage("boxLoginMessage","error","Error de conexión: "+e.message); }
+}
+
+/* ── Login con contraseña ── */
+async function loginConPassword() {
+  const pwd = document.getElementById("txtLoginPassword").value;
+  if (!pwd) { renderMessage("boxLoginMessage","warning","Ingresa la contraseña."); return; }
+  renderMessage("boxLoginMessage","info","Verificando...");
+  try {
+    const data = await postJson(WEBHOOK_AUTH, {rol:appState.rol, password:pwd});
+    if (!data.ok) { renderMessage("boxLoginMessage","error", data.mensaje||"Contraseña incorrecta."); return; }
+    appState.tokenSesion = data.token_sesion||"";
+    document.getElementById("adminRolLabel").textContent =
+      appState.rol === "admin" ? "Administrador" : "Consultor LMSS";
+    document.querySelectorAll(".admin-only").forEach(el =>
+      el.style.display = appState.rol === "admin" ? "" : "none");
+    showScreen("Admin");
+    showAdminSection("Dashboard");
+    loadDashboard();
+  } catch(e) { renderMessage("boxLoginMessage","error","Error: "+e.message); }
+}
+
+/* ── Admin sections ── */
+const SECTIONS = ["Dashboard","Expedientes","Empresa","Accesos"];
+function showAdminSection(name) {
+  SECTIONS.forEach(s => {
+    const sec = document.getElementById("section"+s);
+    const nav = document.getElementById("nav"+s);
+    if (sec) sec.classList.add("hidden");
+    if (nav) nav.classList.remove("active");
+  });
+  const sec = document.getElementById("section"+name);
+  const nav = document.getElementById("nav"+name);
+  if (sec) sec.classList.remove("hidden");
+  if (nav) nav.classList.add("active");
+  if (name==="Empresa")     loadEmpresaConfig();
+  if (name==="Expedientes") loadExpedientes();
+}
+
+async function loadDashboard() {
+  try {
+    const [stats, cfg] = await Promise.all([
+      postJson(WEBHOOK_ADMIN, {accion:"stats"}),
+      postJson(WEBHOOK_ADMIN, {accion:"get_configuracion_empresa"})
+    ]);
+    if (stats.ok) {
+      document.getElementById("statActivos").textContent     = stats.activos     ?? "—";
+      document.getElementById("statCompletados").textContent = stats.completados ?? "—";
+    }
+    const empresa = cfg?.empresa?.nombre || stats.empresa || "";
+    document.getElementById("statEmpresa").textContent = empresa || "Sin configurar";
+  } catch {}
+}
+
+async function loadExpedientes() {
+  const tbody = document.getElementById("tblExpedientes");
+  tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-10 text-center text-sm text-zinc-400">
+    <span class="pulse inline-block w-2 h-2 rounded-full bg-zinc-300 mr-2"></span>Cargando...</td></tr>`;
+  try {
+    const data = await postJson(WEBHOOK_ADMIN, {accion:"listar_expedientes"});
+    if (!data.ok || !data.expedientes?.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-10 text-center text-sm text-zinc-400">No hay expedientes registrados.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = data.expedientes.map(exp => {
+      const cls = exp.estado==="Cerrado"   ? "color:#166534;background:#f0fdf4;border:1px solid #bbf7d0" :
+                  exp.estado==="En curso"  ? "color:#92400e;background:#fffbeb;border:1px solid #fde68a" :
+                                             "color:#52525b;background:#f4f4f6;border:1px solid #e4e4e7";
+      return `<tr class="border-b border-zinc-50 hover:bg-zinc-50 transition-colors">
+        <td class="px-5 py-3 mono text-xs text-zinc-400">${exp.codigo||"—"}</td>
+        <td class="px-5 py-3 text-sm font-medium text-zinc-800">${exp.nombre||"—"}</td>
+        <td class="px-5 py-3 text-sm text-zinc-600">${exp.cargo||"—"}</td>
+        <td class="px-5 py-3">
+          <div class="flex items-center gap-2">
+            <div class="h-1.5 rounded-full w-16" style="background:#e4e4e7">
+              <div class="h-1.5 rounded-full" style="width:${exp.progreso||0}%;background:linear-gradient(90deg,#9333ea,#ec4899)"></div>
+            </div>
+            <span class="text-xs text-zinc-400 mono">${exp.progreso||0}%</span>
+          </div>
+        </td>
+        <td class="px-5 py-3">
+          <span class="tag px-2 py-1 rounded-lg" style="${cls}">${exp.estado||"—"}</span>
+        </td>
+        <td class="px-5 py-3 text-xs text-zinc-400">${exp.ultima_interaccion||"—"}</td>
+      
+        <td class="px-5 py-3">${exp.estado==="Cerrado"?'<button data-codigo="'+exp.codigo+'" onclick="exportarExpediente(this.dataset.codigo)" style="background:#9333ea;color:#fff;border:none;cursor:pointer;padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600">&#8595; PDF</button> <button data-codigo=\"${exp.codigo}\" onclick=\"exportarCSV(this.dataset.codigo)\" style=\"background:#0891b2;color:#fff;border:none;cursor:pointer;padding:5px 10px;border-radius:8px;font-size:12px;font-weight:600\">â†“ CSV</button>':'&mdash;'}</td></tr>`;
+    }).join("");
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-8 text-center text-sm text-red-400">Error: ${e.message}</td></tr>`;
+  }
+}
+
+async function loadEmpresaConfig() {
+  renderMessage("boxEmpresaMessage","info","Cargando configuración...");
+  try {
+    const data = await postJson(WEBHOOK_ADMIN, {accion:"get_configuracion_empresa"});
+    if (data.ok && data.empresa) {
+      document.getElementById("cfgEmpresaNombre").value   = data.empresa.nombre   || "";
+      document.getElementById("cfgEmpresaSector").value   = data.empresa.sector   || "";
+      document.getElementById("cfgEmpresaTamano").value   = data.empresa.tamano   || "";
+      document.getElementById("cfgEmpresaContexto").value = data.empresa.contexto || "";
+      document.getElementById("cfgAdminNombre").value     = data.empresa.admin    || "";
+      renderMessage("boxEmpresaMessage","success","Configuración cargada.");
+    } else {
+      renderMessage("boxEmpresaMessage","info","Sin configuración guardada. Completa el formulario.");
+    }
+  } catch(e) { renderMessage("boxEmpresaMessage","error","Error: "+e.message); }
+}
+
+async function saveEmpresaConfig() {
+  const nombre   = document.getElementById("cfgEmpresaNombre").value.trim();
+  const sector   = document.getElementById("cfgEmpresaSector").value;
+  const tamano   = document.getElementById("cfgEmpresaTamano").value;
+  const contexto = document.getElementById("cfgEmpresaContexto").value.trim();
+  const admin    = document.getElementById("cfgAdminNombre").value.trim();
+  if (!nombre||!sector||!tamano||!contexto) {
+    renderMessage("boxEmpresaMessage","warning","Completa todos los campos obligatorios."); return;
+  }
+  renderMessage("boxEmpresaMessage","info","Guardando...");
+  try {
+    const data = await postJson(WEBHOOK_ADMIN, {
+      accion:"guardar_configuracion_empresa",
+      empresa:{nombre,sector,tamano,contexto,admin}
+    });
+    if (data.ok) renderMessage("boxEmpresaMessage","success","Guardado correctamente.");
+    else renderMessage("boxEmpresaMessage","error", data.mensaje||"No se pudo guardar.");
+  } catch(e) { renderMessage("boxEmpresaMessage","error","Error: "+e.message); }
+}
+
+async function saveAccesos() {
+  renderMessage("boxAccesosMessage","info","La rotacion de contraseÃ±as fue deshabilitada en esta version por seguridad. Actualiza LEVANTAMIENTO_ADMIN_PASSWORD y LEVANTAMIENTO_CONSULTOR_PASSWORD en n8n para cambiar accesos.");
+  ["pwdConsultor","pwdAdmin","pwdActual"].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = "";
+  });
+}
+
+/* ── Safe DOM helpers ── */
+function setText(id, val) { const e = document.getElementById(id); if (e) e.textContent = val; }
+function setStyle(id, prop, val) { const e = document.getElementById(id); if (e) e.style[prop] = val; }
+/* ── Interview state ── */
+function applyState(data) {
+  // Limpiar cualquier mensaje de error previo al recibir respuesta exitosa
+  renderMessage("boxMessage","","");
+  appState.codigoExpediente    = data.codigo_expediente   || "";
+  appState.preguntaActualId    = data.pregunta_actual_id  || "";
+  appState.preguntaActualTexto = data.pregunta_actual     || "";
+  appState.preguntaAyuda       = data.ayuda               || "";
+  appState.identificadorColaborador = data.identificador_colaborador || appState.identificadorColaborador || "";
+  appState.preguntaTipo        = data.tipo_respuesta      || "Texto largo";
+  appState.preguntaOpciones    = data.opciones            || [];
+  appState.progreso            = Number(data.progreso     || 0);
+  appState.estadoExpediente    = data.estado_expediente   || appState.estadoExpediente || "En curso";
+  appState.cargo         = data.cargo_actual   || appState.cargo         || "Levantamiento de cargos";
+  appState.area          = data.area            || appState.area          || "";
+  appState.jefeInmediato = data.jefe_inmediato  || appState.jefeInmediato || "";
+  appState.nombreEntrevistado  = data.nombre_colaborador  || appState.nombreEntrevistado || "";
+  appState.resumenIA           = data.ultima_respuesta_resumida || data.resumen_ia || "";
+}
+
+function qNum(id) { return Number(String(id||"").replace("P",""))||0; }
+
+function phaseInfo(id) {
+  const n   = qNum(id);
+  const idx = PHASES.findIndex(p => n >= p.range[0] && n <= p.range[1]);
+  const ph  = idx>=0 ? PHASES[idx] : PHASES[0];
+  return {
+    fase:     `Fase ${idx>=0?idx+1:1}`,
+    titulo:   ph.label,
+    tiempo:   ph.eta,
+    siguiente: PHASES[idx+1]?.label || "Cierre"
+  };
+}
+
+function renderSteps(id) {
+  const n   = qNum(id);
+  const cur = PHASES.findIndex(p => n >= p.range[0] && n <= p.range[1]);
+  document.getElementById("stepsContainer").innerHTML = PHASES.map((ph,i) => {
+    const done   = i <  cur;
+    const active = i === cur;
+    const dotBg  = done   ? "linear-gradient(135deg,#9333ea,#ec4899)"
+                 : active ? "#ffffff"
+                 :          "rgba(255,255,255,0.20)";
+    const dotClr = done||active ? "#18181b" : "rgba(255,255,255,0.55)";
+    const txtClr = active ? "color:white;font-weight:500"
+                 : done   ? "color:#a1a1aa"
+                 :          "color:#b4b4b8";
+    return `<div class="flex items-center gap-3 py-0.5">
+      <div class="step-dot" style="background:${dotBg};color:${dotClr}">
+        ${done?"✓":i+1}
+      </div>
+      <span class="text-xs" style="${txtClr}">${ph.label}</span>
+    </div>`;
+  }).join("");
+}
+
+function getFixedHelp(questionId) {
+  const AYUDAS_FIJAS = {
+    P05: "Indica el nombre completo y el cargo. Ej: Juan Perez - Gerente de Logistica"
+  };
+  return AYUDAS_FIJAS[questionId] || "";
+}
+
+function renderAnswerInput() {
+  const tipo = appState.preguntaTipo;
+  const ta   = document.getElementById("answerTextarea");
+  const btns = document.getElementById("answerButtons");
+  document.getElementById("txtRespuesta").value = "";
+
+  // Opciones hardcoded por pregunta
+  const OPCIONES_FIJAS = {
+    P04: ["Abastecimiento","Logística","SAC","Calidad","Comercial","Administración","Otro"],
+    P07: ["Si","No"],
+    P09: ["Estratégico","Táctico","Operativo","Administrativo"],
+    P41: ["Alto","Medio","Bajo"]
+  };
+  const opsFijas = OPCIONES_FIJAS[appState.preguntaActualId] || [];
+  const ops      = opsFijas.length ? opsFijas : (appState.preguntaOpciones || []);
+
+  if (tipo==="Si/No" || tipo==="Seleccion unica" || ops.length) {
+    ta.classList.add("hidden");
+    btns.classList.remove("hidden");
+    btns.innerHTML = ops.map((opt, i) =>
+      `<button class="answer-btn" data-idx="${i}">${opt}</button>`
+    ).join("");
+    btns.querySelectorAll(".answer-btn").forEach(btn => {
+      btn.addEventListener("click", function() { selectOpt(this, this.textContent); });
+    });
+  } else {
+    btns.classList.add("hidden");
+    ta.classList.remove("hidden");
+    setTimeout(() => document.getElementById("txtRespuesta").focus(), 80);
+  }
+}
+
+function selectOpt(btn, value) {
+  document.querySelectorAll(".answer-btn").forEach(b => b.classList.remove("selected"));
+  btn.classList.add("selected");
+  document.getElementById("txtRespuesta").value = value;
+}
+
+function renderInterviewView() {
+  const ph = phaseInfo(appState.preguntaActualId);
+  renderSteps(appState.preguntaActualId);
+  renderAnswerInput();
+
+  setText("lblCargo", appState.cargo || "Levantamiento de cargos");
+  setText("lblMetaExpediente", `Área: ${appState.area||"—"} · Jefe inmediato: ${appState.jefeInmediato||"—"}`);
+  setText("lblCodigoExpediente", appState.codigoExpediente||"—");
+  setText("lblEntrevistado", appState.nombreEntrevistado||"—");
+  setText("lblFase", ph.fase);
+  setText("lblTituloFase", ph.titulo);
+  setText("lblTiempoEstimado", ph.tiempo);
+  setText("lblPreguntaId", appState.preguntaActualId||"—");
+  setText("txtPreguntaActual", appState.preguntaActualTexto||"—");
+  // Ayuda: show block only when there is help text
+  const ayudaBox = document.getElementById("boxAyuda");
+  const ayudaTxt = document.getElementById("txtAyuda");
+  const ayudaVisible = getFixedHelp(appState.preguntaActualId) || appState.preguntaAyuda;
+  if (ayudaVisible && ayudaVisible.trim()) {
+    ayudaTxt.textContent = ayudaVisible;
+    ayudaBox.classList.remove("hidden");
+  } else {
+    ayudaBox.classList.add("hidden");
+    ayudaTxt.textContent = "";
+  }
+  setText("lblSiguienteFase", ph.siguiente);
+  setText("lblEstadoExpediente", appState.estadoExpediente||"—");
+  setText("lblRespondidoPor", appState.nombreEntrevistado||"Colaborador");
+  setText("lblUltimaActualizacion", new Date().toLocaleString("es-CO",{dateStyle:"short",timeStyle:"short"}));
+
+  const pct = Math.max(0,Math.min(100,appState.progreso));
+  setStyle("progressBar", "width", pct+"%");
+  setText("lblProgreso", pct+"% completado");
+
+  // Question counter + phase detection (phIdx declared once, used in both)
+  const qN    = qNum(appState.preguntaActualId);
+  const phIdx = PHASES.findIndex(p => qN >= p.range[0] && qN <= p.range[1]);
+
+  // Phase transition detection
+  const banner    = document.getElementById("bannerFaseCambio");
+  const bannerTxt = document.getElementById("txtFaseCambio");
+  const newFase   = phIdx >= 0 ? PHASES[phIdx].label : "";
+  if (appState.faseActual && appState.faseActual !== newFase && newFase) {
+    bannerTxt.textContent = `Nueva fase: ${newFase}`;
+    banner.classList.remove("hidden");
+    setTimeout(() => banner.classList.add("hidden"), 4000);
+  }
+  appState.faseActual = newFase;
+
+  // Question counter within phase
+  if (phIdx >= 0) {
+    const ph2       = PHASES[phIdx];
+    const qInFase   = qN - ph2.range[0] + 1;
+    const totalFase = ph2.range[1] - ph2.range[0] + 1;
+    setText("lblContadorFase", `${qInFase} / ${totalFase} en esta fase`);
+  }
+
+  // Resumen IA: only show when there is content
+  const resumenCard = document.getElementById("cardResumenIA");
+  const resumenTxt  = document.getElementById("boxResumenIA");
+  if (appState.resumenIA && appState.resumenIA.trim()) {
+    resumenTxt.textContent = appState.resumenIA;
+    resumenCard.classList.remove("hidden");
+  } else {
+    resumenCard.classList.add("hidden");
+  }
+
+  renderMessage("boxMessage","","");
+}
+
+/* ── Submit ── */
+async function submitAnswer() {
+  const respuesta = document.getElementById("txtRespuesta").value.trim();
+  if (!appState.codigoExpediente || !appState.preguntaActualId) {
+    renderMessage("boxMessage","error","No hay una entrevista activa."); return;
+  }
+  if (!respuesta) {
+    renderMessage("boxMessage","warning","Escribe o selecciona una respuesta."); return;
+  }
+  const btn = document.getElementById("btnContinuar");
+  const spinner = document.getElementById("btnSpinner");
+  const btnLabel = document.getElementById("btnContinuarLabel");
+  btn.disabled = true;
+  spinner.classList.remove("hidden");
+  btnLabel.textContent = "Guardando...";
+  renderMessage("boxMessage","info","Guardando respuesta...");
+  try {
+    const data = await postJson(WEBHOOK_URL, {
+      codigo_expediente: appState.codigoExpediente,
+      pregunta_actual_id_enviada: appState.preguntaActualId,
+      respuesta
+    });
+    if (data.ok && data.estado==="listo_para_cierre") {
+      appState.progreso = Number(data.progreso||100);
+      setText("txtFinalMessage", data.mensaje || "La entrevista ha terminado.");
+      showScreen("Final"); return;
+    }
+    if (data.ok) { applyState(data); renderInterviewView(); return; }
+    if (data.error==="expediente_en_procesamiento") {
+      renderMessage("boxMessage","warning", data.mensaje||"Expediente en procesamiento, espera unos segundos.");
+      return;
+    }
+    if (data.error==="pregunta_fuera_de_secuencia") {
+      // Resincronizar estado silenciosamente
+      applyState(data);
+      renderInterviewView();
+      return;
+    }
+    if (data.recuperable) { await tryRecover(data.mensaje); return; }
+    renderMessage("boxMessage","error", data.mensaje||"Error al guardar.");
+  } catch(e) {
+    // Solo mostrar error si la respuesta no llegó (error de red puro)
+    const esMensajeRed = e instanceof TypeError && e.message.includes("fetch");
+    if (esMensajeRed) {
+      renderMessage("boxMessage","error","Error de conexión. Verifica tu red e intenta nuevamente.");
+    } else {
+      console.error("[submitAnswer catch]", e.message);
+    }
+    // NUNCA llamar tryRecover aquí Ã¢â‚¬â€ evita el mensaje falso
+  } finally {
+    btn.disabled = false;
+    spinner.classList.add("hidden");
+    btnLabel.textContent = "Guardar y continuar →";
+  }
+}
+
+async function tryRecover(msg) {
+  renderMessage("boxMessage","warning", msg||"Problema temporal. Recargando...");
+  if (!appState.identificadorColaborador) return;
+  setTimeout(async () => {
+    try {
+      const data = await postJson(WEBHOOK_URL,
+        {accion:"iniciar_o_retomar", identificador_colaborador:appState.identificadorColaborador});
+      if (data.ok) { applyState(data); renderInterviewView(); renderMessage("boxMessage","info","Entrevista recargada."); }
+    } catch { renderMessage("boxMessage","error","No fue posible recuperar la entrevista."); }
+  }, 2000);
+}
+
+async function closeExpediente() {
+  if (!appState.codigoExpediente) {
+    renderMessage("boxFinalMessage","error","No hay expediente activo."); return;
+  }
+  const btn = document.getElementById("btnFinalizar");
+  btn.disabled=true; btn.textContent="Cerrando...";
+  renderMessage("boxFinalMessage","info","Cerrando y generando entregables...");
+  try {
+    const data = await postJson(WEBHOOK_URL,
+      {codigo_expediente:appState.codigoExpediente, accion:"cerrar_expediente"});
+    if (data.ok) renderMessage("boxFinalMessage","success", data.mensaje||"Expediente cerrado.");
+    else renderMessage("boxFinalMessage","error", data.mensaje||"No se pudo cerrar.");
+  } catch(e) { renderMessage("boxFinalMessage","error","Error: "+e.message); }
+  finally { btn.disabled=false; btn.textContent="Finalizar expediente"; }
+}
+
+function goBackToStart() {
+  Object.assign(appState,{
+    rol:"",tokenSesion:"",identificadorColaborador:"",codigoExpediente:"",
+    preguntaActualId:"",preguntaActualTexto:"",preguntaAyuda:"",
+    preguntaTipo:"Texto largo",preguntaOpciones:[],progreso:0,
+    estadoExpediente:"",cargo:"",area:"",jefeInmediato:"",nombreEntrevistado:"",
+    resumenIA:"",faseActual:""
+  });
+  ["txtLoginCedula","txtLoginPassword","txtRespuesta"].forEach(id => {
+    const el=document.getElementById(id); if(el) el.value="";
+  });
+  document.querySelectorAll(".role-card").forEach(c=>c.classList.remove("selected"));
+  document.getElementById("loginColaborador").classList.add("hidden");
+  document.getElementById("loginPassword").classList.add("hidden");
+  ["boxLoginMessage","boxMessage","boxFinalMessage"].forEach(id=>renderMessage(id,"",""));
+  
+
+showScreen("Login");
+}
+
+/* ── Keyboard shortcuts ── */
+document.addEventListener("keydown", e => {
+  if (e.ctrlKey && e.key==="Enter" && !document.getElementById("screenInterview").classList.contains("hidden"))
+    submitAnswer();
+  if (e.key==="Enter" && document.activeElement?.id==="txtLoginCedula")  loginColaborador();
+  if (e.key==="Enter" && document.activeElement?.id==="txtLoginPassword") loginConPassword();
+});
+
+
+
+
+
+window.exportarExpediente = function(codigo) {
+  var btn=event.currentTarget, orig=btn.innerHTML;
+  btn.innerHTML='Procesando...'; btn.disabled=true;
+  postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
+  .then(function(d){
+    if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
+    var exp=d.expediente||{},ent=d.entregables||{};
+    var now=new Date().toLocaleDateString('es-CO',{year:'numeric',month:'long',day:'numeric'});
+    function row(l,v){if(!v&&v!==0)return '';return '<tr><td style=font-weight:600;color:#52525b;width:180px;padding:6px 12px>'+l+'</td><td style=padding:6px 12px>'+v+'</td></tr>';}
+    function sec(t,b){if(!b)return '';return '<div style=margin-top:20px><h3 style=font-size:14px;font-weight:700;color:#7c3aed;border-bottom:2px solid #ede9fe;padding-bottom:5px;margin-bottom:8px>'+t+'</h3><p style=font-size:13px;line-height:1.8;white-space:pre-wrap;margin:0>'+b+'</p></div>';}
+    var htm='<!DOCTYPE html><html><head><meta charset=UTF-8><title>Reporte '+exp.codigo+'</title>';
+    htm+='<style>body{font-family:Arial,sans-serif;padding:32px;color:#18181b;margin:0}';
+    htm+='.h{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;padding:22px 28px;border-radius:12px;margin-bottom:18px}';
+    htm+='.h h1{font-size:20px;font-weight:700;margin:0 0 4px}.h p{margin:0;opacity:.85;font-size:13px}';
+    htm+='table{width:100%;border-collapse:collapse;font-size:13px}';
+    htm+='td{border-bottom:1px solid #f0f0f0}tr:nth-child(even) td{background:#faf9ff}';
+    htm+='h2{font-size:14px;font-weight:700;color:#27272a;margin:16px 0 8px}';
+    htm+='footer{margin-top:28px;font-size:11px;color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}';
+    htm+='@media print{.h{-webkit-print-color-adjust:exact;print-color-adjust:exact}}';
+    htm+='</style></head><body>';
+    htm+='<div class=h><h1>Levantamiento de Cargo</h1><p>'+(exp.cargo||'-')+' &middot; '+exp.codigo+' &middot; '+now+'</p></div>';
+    htm+='<h2>Datos del Colaborador</h2><table>';
+    htm+=row('Nombre',exp.nombre)+row('Cargo',exp.cargo)+row('Área',exp.area);
+    htm+=row('Jefe inmediato',exp.jefe_inmediato)+row('Ubicación',exp.ubicacion);
+    htm+=row('Tiempo en cargo',exp.tiempo_cargo)+row('Nivel del cargo',exp.nivel);
+    htm+=row('Personal a cargo',exp.tiene_personal?'Sí':'No');
+    htm+=row('Estado',exp.estado)+row('Progreso',(exp.progreso||0)+'%');
+    htm+=row('Última actualización',exp.ultima_interaccion);
+    htm+='</table>';
+    htm+=sec('Perfil de Selección',ent.perfil_seleccion);
+    htm+=sec('Descripción del Cargo',ent.descripcion_cargo);
+    htm+=sec('Requisitos del Cargo',ent.requisitos);
+    htm+=sec('Indicadores de Gestión',ent.indicadores);
+    htm+=sec('Recomendaciones Finales',ent.recomendaciones_finales);
+    htm+='<footer>Generado por LM Smart Solutions</footer>';
+    htm+='</body></html>';
+    var blob=new Blob([htm],{type:'text/html;charset=utf-8'});
+    var url='data:text/html;charset=utf-8;base64,'+btoa(unescape(encodeURIComponent(htm)));
+    window.open(url,'_blank');
+  }).catch(function(e){alert('Error PDF: '+e.message);})
+  .finally(function(){btn.innerHTML=orig;btn.disabled=false;});
+};
+
+window.exportarCSV = function(codigo) {
+  var btn=event.currentTarget, orig=btn.innerHTML;
+  btn.innerHTML='Exportando...'; btn.disabled=true;
+  postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
+  .then(function(d){
+    if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
+    var exp=d.expediente||{},ent=d.entregables||{};
+    var q=String.fromCharCode(34);
+    function esc(v){var s=String(v==null?'':v);if(s.indexOf(',')>=0||s.indexOf(q)>=0){return q+s.split(q).join(q+q)+q;}return s;}
+    var h=['Codigo','Nombre','Cargo','Area','Jefe Inmediato','Ubicacion','Tiempo en Cargo','Nivel del Cargo','Personal a Cargo','Estado','Progreso','Ultima Interaccion','Perfil Seleccion','Descripcion Cargo','Requisitos','Indicadores','Recomendaciones'];
+    var r=[esc(exp.codigo),esc(exp.nombre),esc(exp.cargo),esc(exp.area),esc(exp.jefe_inmediato),esc(exp.ubicacion),esc(exp.tiempo_cargo),esc(exp.nivel),esc(exp.tiene_personal?'Si':'No'),esc(exp.estado),esc(exp.progreso),esc(exp.ultima_interaccion),esc(ent.perfil_seleccion),esc(ent.descripcion_cargo),esc(ent.requisitos),esc(ent.indicadores),esc(ent.recomendaciones_finales)];
+    var csv=h.join(',')+String.fromCharCode(13,10)+r.join(',');
+    var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url; a.download='expediente_'+codigo+'.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }).catch(function(e){alert('Error CSV: '+e.message);})
+  .finally(function(){btn.innerHTML=orig;btn.disabled=false;});
+};
+
+showScreen("Login");
+
