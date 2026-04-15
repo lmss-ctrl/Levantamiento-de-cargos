@@ -664,17 +664,33 @@ function collectExportRows(data) {
   var exp = data.expediente || {};
   var ent = data.entregables || {};
   var resp = data.respuestas || [];
+  var canonicalEntKeys = [
+    "perfil_seleccion",
+    "manual_cargo",
+    "kpis_sugeridos",
+    "hallazgos_optimizacion",
+    "recomendaciones_finales",
+    "matriz_funciones_responsabilidades",
+    "raci_basico",
+    "analisis_carga_tiempos",
+    "contraste_mejores_practicas"
+  ];
 
   Object.keys(exp).forEach(function(key) {
-    rows.push({ section: "Expediente", field: key, value: exp[key] });
+    if (exp[key] || exp[key] === 0 || exp[key] === false) {
+      rows.push({ section: "Expediente", field: key, value: exp[key] });
+    }
   });
 
-  Object.keys(ent).forEach(function(key) {
-    rows.push({ section: "Entregables", field: key, value: ent[key] });
+  canonicalEntKeys.forEach(function(key) {
+    if (ent[key]) {
+      rows.push({ section: "Entregables", field: key, value: ent[key] });
+    }
   });
 
   if (Array.isArray(resp) && resp.length) {
     resp.forEach(function(item, index) {
+      if (!item.respuesta) return;
       rows.push({
         section: "Respuestas",
         field: (item.id_pregunta || ("P" + (index + 1))) + " - " + (item.pregunta || "Pregunta"),
@@ -689,8 +705,6 @@ function collectExportRows(data) {
 function entregableLabel(key) {
   var labels = {
     perfil_seleccion: "Perfil de Selección",
-    descripcion_cargo: "Manual de Cargo",
-    indicadores: "KPIs Sugeridos",
     recomendaciones_finales: "Recomendaciones Finales",
     manual_cargo: "Manual de Cargo",
     kpis_sugeridos: "KPIs Sugeridos",
@@ -709,17 +723,21 @@ window.exportarExpediente = function(codigo, btnEl) {
   postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
   .then(function(d){
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
-    var exp=d.expediente||{},ent=d.entregables||{}, rows=collectExportRows(d);
+    var exp=d.expediente||{},ent=d.entregables||{};
+    var orderedEntKeys = [
+      "perfil_seleccion",
+      "manual_cargo",
+      "kpis_sugeridos",
+      "hallazgos_optimizacion",
+      "recomendaciones_finales",
+      "matriz_funciones_responsabilidades",
+      "raci_basico",
+      "analisis_carga_tiempos",
+      "contraste_mejores_practicas"
+    ];
     var now=new Date().toLocaleDateString('es-CO',{year:'numeric',month:'long',day:'numeric'});
     function row(l,v){if(!v&&v!==0)return '';return '<tr><td style="font-weight:600;color:#52525b;width:220px;padding:6px 12px;vertical-align:top">'+escapeHtml(l)+'</td><td style="padding:6px 12px;white-space:pre-wrap">'+escapeHtml(v)+'</td></tr>';}
     function sec(t,b){if(!b)return '';return '<div style="margin-top:20px"><h3 style="font-size:14px;font-weight:700;color:#7c3aed;border-bottom:2px solid #ede9fe;padding-bottom:5px;margin-bottom:8px">'+escapeHtml(t)+'</h3><p style="font-size:13px;line-height:1.8;white-space:pre-wrap;margin:0">'+escapeHtml(b)+'</p></div>';}
-    function rowsTable(title, list) {
-      if (!list.length) return '';
-      var html = '<div style="margin-top:20px"><h3 style="font-size:14px;font-weight:700;color:#7c3aed;border-bottom:2px solid #ede9fe;padding-bottom:5px;margin-bottom:8px">' + escapeHtml(title) + '</h3><table>';
-      html += list.map(function(item){ return row(item.field, item.value); }).join('');
-      html += '</table></div>';
-      return html;
-    }
     var htm='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reporte '+escapeHtml(exp.codigo||codigo)+'</title>';
     htm+='<style>body{font-family:Arial,sans-serif;padding:32px;color:#18181b;margin:0}';
     htm+='.h{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;padding:22px 28px;border-radius:12px;margin-bottom:18px}';
@@ -739,10 +757,9 @@ window.exportarExpediente = function(codigo, btnEl) {
     htm+=row('Estado',exp.estado)+row('Progreso',(exp.progreso||0)+'%');
     htm+=row('Última actualización',exp.ultima_interaccion);
     htm+='</table>';
-    Object.keys(ent).forEach(function(key){
+    orderedEntKeys.forEach(function(key){
       if (ent[key]) htm += sec(entregableLabel(key), ent[key]);
     });
-    htm+=rowsTable('Datos completos exportados', rows);
     htm+='<footer>Generado por LM Smart Solutions</footer>';
     htm+='</body></html>';
     var blob=new Blob([htm],{type:'text/html;charset=utf-8'});
