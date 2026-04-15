@@ -26,6 +26,68 @@ const appState = {
   cargo:"", area:"", jefeInmediato:"", nombreEntrevistado:""
 };
 
+const SESSION_KEY = "levantamiento_cargos_front_session_v1";
+const DRAFT_KEY = "levantamiento_cargos_front_draft_v1";
+let isSubmittingAnswer = false;
+
+function persistSession() {
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      rol: appState.rol || "",
+      tokenSesion: appState.tokenSesion || "",
+      identificadorColaborador: appState.identificadorColaborador || "",
+      codigoExpediente: appState.codigoExpediente || "",
+      preguntaActualId: appState.preguntaActualId || ""
+    }));
+  } catch {}
+}
+
+function clearSession() {
+  try {
+    sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(DRAFT_KEY);
+  } catch {}
+}
+
+function loadPersistedSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft() {
+  try {
+    const answerEl = document.getElementById("txtRespuesta");
+    const value = answerEl ? answerEl.value : "";
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+      codigoExpediente: appState.codigoExpediente || "",
+      preguntaActualId: appState.preguntaActualId || "",
+      value: value || ""
+    }));
+  } catch {}
+}
+
+function restoreDraft() {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    if (!raw) return;
+    const draft = JSON.parse(raw);
+    const answerEl = document.getElementById("txtRespuesta");
+    if (!answerEl) return;
+    if (draft.codigoExpediente === (appState.codigoExpediente || "") &&
+        draft.preguntaActualId === (appState.preguntaActualId || "")) {
+      answerEl.value = draft.value || "";
+    }
+  } catch {}
+}
+
+function clearDraft() {
+  try { sessionStorage.removeItem(DRAFT_KEY); } catch {}
+}
+
 /* ── Screens ── */
 const SCREENS = ["Login","Interview","Final","Admin"];
 function showScreen(name) {
@@ -53,12 +115,22 @@ async function postJson(url, payload) {
   const res = await fetch(url, {method:"POST", headers, body:JSON.stringify(payload)});
   const text = await res.text();
   if (!text) throw new Error("Respuesta vacía del servidor");
-  try { return JSON.parse(text); } catch { throw new Error("Respuesta no válida del servidor"); }
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("Respuesta no válida del servidor");
+  }
+  if (!res.ok) {
+    throw new Error(data?.mensaje || ("Error HTTP " + res.status));
+  }
+  return data;
 }
 
 /* ── Role selection ── */
 function selectRole(rol) {
   appState.rol = rol;
+  persistSession();
   document.querySelectorAll(".role-card").forEach(c => c.classList.remove("selected"));
   document.querySelector(`[data-role="${rol}"]`)?.classList.add("selected");
   document.getElementById("loginColaborador").classList.add("hidden");
@@ -85,6 +157,7 @@ async function loginColaborador() {
     if (!data.ok) { renderMessage("boxLoginMessage","error", data.mensaje||"No se pudo iniciar la entrevista."); return; }
     applyState(data);
     renderInterviewView();
+    persistSession();
     showScreen("Interview");
   } catch(e) { renderMessage("boxLoginMessage","error","Error de conexión: "+e.message); }
 }
@@ -98,6 +171,7 @@ async function loginConPassword() {
     const data = await postJson(WEBHOOK_AUTH, {rol:appState.rol, password:pwd});
     if (!data.ok) { renderMessage("boxLoginMessage","error", data.mensaje||"Contraseña incorrecta."); return; }
     appState.tokenSesion = data.token_sesion||"";
+    persistSession();
     document.getElementById("adminRolLabel").textContent =
       appState.rol === "admin" ? "Administrador" : "Consultor LMSS";
     document.querySelectorAll(".admin-only").forEach(el =>
@@ -243,6 +317,7 @@ function applyState(data) {
   appState.jefeInmediato = data.jefe_inmediato  || appState.jefeInmediato || "";
   appState.nombreEntrevistado  = data.nombre_colaborador  || appState.nombreEntrevistado || "";
   appState.resumenIA           = data.ultima_respuesta_resumida || data.resumen_ia || "";
+  persistSession();
 }
 
 function qNum(id) { return Number(String(id||"").replace("P",""))||0; }
@@ -318,6 +393,7 @@ function renderAnswerInput() {
     ta.classList.remove("hidden");
     setTimeout(() => document.getElementById("txtRespuesta").focus(), 80);
   }
+  restoreDraft();
 }
 
 function selectOpt(btn, value) {
@@ -409,6 +485,7 @@ async function submitAnswer() {
   const spinner = document.getElementById("btnSpinner");
   const btnLabel = document.getElementById("btnContinuarLabel");
   btn.disabled = true;
+  isSubmittingAnswer = true;
   spinner.classList.remove("hidden");
   btnLabel.textContent = "Guardando...";
   renderMessage("boxMessage","info","Guardando respuesta...");
@@ -419,11 +496,12 @@ async function submitAnswer() {
       respuesta
     });
     if (data.ok && data.estado==="listo_para_cierre") {
+      clearDraft();
       appState.progreso = Number(data.progreso||100);
       setText("txtFinalMessage", data.mensaje || "La entrevista ha terminado.");
       showScreen("Final"); return;
     }
-    if (data.ok) { applyState(data); renderInterviewView(); return; }
+    if (data.ok) { clearDraft(); applyState(data); renderInterviewView(); return; }
     if (data.error==="expediente_en_procesamiento") {
       renderMessage("boxMessage","warning", data.mensaje||"Expediente en procesamiento, espera unos segundos.");
       return;
@@ -446,6 +524,7 @@ async function submitAnswer() {
     }
     // NUNCA llamar tryRecover aquí Ã¢â‚¬â€ evita el mensaje falso
   } finally {
+    isSubmittingAnswer = false;
     btn.disabled = false;
     spinner.classList.add("hidden");
     btnLabel.textContent = "Guardar y continuar →";
@@ -474,7 +553,10 @@ async function closeExpediente() {
   try {
     const data = await postJson(WEBHOOK_URL,
       {codigo_expediente:appState.codigoExpediente, accion:"cerrar_expediente"});
-    if (data.ok) renderMessage("boxFinalMessage","success", data.mensaje||"Expediente cerrado.");
+    if (data.ok) {
+      clearDraft();
+      renderMessage("boxFinalMessage","success", data.mensaje||"Expediente cerrado.");
+    }
     else renderMessage("boxFinalMessage","error", data.mensaje||"No se pudo cerrar.");
   } catch(e) { renderMessage("boxFinalMessage","error","Error: "+e.message); }
   finally { btn.disabled=false; btn.textContent="Finalizar expediente"; }
@@ -495,7 +577,7 @@ function goBackToStart() {
   document.getElementById("loginColaborador").classList.add("hidden");
   document.getElementById("loginPassword").classList.add("hidden");
   ["boxLoginMessage","boxMessage","boxFinalMessage"].forEach(id=>renderMessage(id,"",""));
-  
+  clearSession();
 
 showScreen("Login");
 }
@@ -506,6 +588,54 @@ document.addEventListener("keydown", e => {
     submitAnswer();
   if (e.key==="Enter" && document.activeElement?.id==="txtLoginCedula")  loginColaborador();
   if (e.key==="Enter" && document.activeElement?.id==="txtLoginPassword") loginConPassword();
+});
+
+window.addEventListener("beforeunload", function(e) {
+  const answerEl = document.getElementById("txtRespuesta");
+  const hasDraft = !!(answerEl && answerEl.value && answerEl.value.trim());
+  if (isSubmittingAnswer || (appState.codigoExpediente && hasDraft)) {
+    saveDraft();
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
+
+document.addEventListener("input", function(e) {
+  if (e.target && e.target.id === "txtRespuesta") {
+    saveDraft();
+  }
+});
+
+window.addEventListener("load", function() {
+  const persisted = loadPersistedSession();
+  if (!persisted) return;
+
+  if (persisted.identificadorColaborador) {
+    appState.identificadorColaborador = persisted.identificadorColaborador;
+    const cedulaEl = document.getElementById("txtLoginCedula");
+    if (cedulaEl && !cedulaEl.value) cedulaEl.value = persisted.identificadorColaborador;
+  }
+
+  if (persisted.rol === "admin" || persisted.rol === "consultor") {
+    appState.rol = persisted.rol;
+    appState.tokenSesion = persisted.tokenSesion || "";
+    selectRole(appState.rol);
+    if (appState.tokenSesion) {
+      document.getElementById("adminRolLabel").textContent =
+        appState.rol === "admin" ? "Administrador" : "Consultor LMSS";
+      document.querySelectorAll(".admin-only").forEach(el =>
+        el.style.display = appState.rol === "admin" ? "" : "none");
+      showScreen("Admin");
+      showAdminSection("Dashboard");
+      loadDashboard();
+    }
+    return;
+  }
+
+  if (persisted.identificadorColaborador) {
+    selectRole("colaborador");
+    renderMessage("boxLoginMessage","info","Se encontró una sesión reciente. Puedes retomar la entrevista.");
+  }
 });
 
 
