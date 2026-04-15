@@ -686,6 +686,23 @@ function collectExportRows(data) {
   return rows;
 }
 
+function entregableLabel(key) {
+  var labels = {
+    perfil_seleccion: "Perfil de Selección",
+    descripcion_cargo: "Manual de Cargo",
+    indicadores: "KPIs Sugeridos",
+    recomendaciones_finales: "Recomendaciones Finales",
+    manual_cargo: "Manual de Cargo",
+    kpis_sugeridos: "KPIs Sugeridos",
+    hallazgos_optimizacion: "Hallazgos de Optimización",
+    matriz_funciones_responsabilidades: "Matriz de Funciones y Responsabilidades",
+    raci_basico: "RACI Básico",
+    analisis_carga_tiempos: "Análisis de Carga y Tiempos",
+    contraste_mejores_practicas: "Contraste con Mejores Prácticas"
+  };
+  return labels[key] || key.replace(/_/g, " ").replace(/\b\w/g, function(c){ return c.toUpperCase(); });
+}
+
 window.exportarExpediente = function(codigo, btnEl) {
   var btn = btnEl || null, orig = btn ? btn.innerHTML : "";
   if (btn) { btn.innerHTML = 'Procesando...'; btn.disabled = true; }
@@ -722,11 +739,9 @@ window.exportarExpediente = function(codigo, btnEl) {
     htm+=row('Estado',exp.estado)+row('Progreso',(exp.progreso||0)+'%');
     htm+=row('Última actualización',exp.ultima_interaccion);
     htm+='</table>';
-    htm+=sec('Perfil de Selección',ent.perfil_seleccion);
-    htm+=sec('Descripción del Cargo',ent.descripcion_cargo);
-    htm+=sec('Requisitos del Cargo',ent.requisitos);
-    htm+=sec('Indicadores de Gestión',ent.indicadores);
-    htm+=sec('Recomendaciones Finales',ent.recomendaciones_finales);
+    Object.keys(ent).forEach(function(key){
+      if (ent[key]) htm += sec(entregableLabel(key), ent[key]);
+    });
     htm+=rowsTable('Datos completos exportados', rows);
     htm+='<footer>Generado por LM Smart Solutions</footer>';
     htm+='</body></html>';
