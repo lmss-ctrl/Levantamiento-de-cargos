@@ -109,12 +109,28 @@ function renderMessage(boxId, type, text) {
 }
 
 /* ── HTTP ── */
-async function postJson(url, payload) {
+function waitMs(ms) {
+  return new Promise(function(resolve) { setTimeout(resolve, ms); });
+}
+
+async function postJson(url, payload, retries) {
+  if (retries == null) retries = 1;
   const headers = {"Content-Type":"application/json"};
   if (appState.tokenSesion) headers["X-Session-Token"] = appState.tokenSesion;
-  const res = await fetch(url, {method:"POST", headers, body:JSON.stringify(payload)});
+  const res = await fetch(url, {
+    method:"POST",
+    headers,
+    body:JSON.stringify(payload),
+    cache:"no-store"
+  });
   const text = await res.text();
-  if (!text) throw new Error("Respuesta vacía del servidor");
+  if (!text) {
+    if (retries > 0) {
+      await waitMs(350);
+      return postJson(url, payload, retries - 1);
+    }
+    throw new Error("Respuesta vacía del servidor");
+  }
   let data;
   try {
     data = JSON.parse(text);
@@ -664,6 +680,7 @@ function collectExportRows(data) {
   var exp = data.expediente || {};
   var ent = data.entregables || {};
   var resp = data.respuestas || [];
+  var seenResponseKeys = {};
   var canonicalEntKeys = [
     "perfil_seleccion",
     "manual_cargo",
@@ -691,6 +708,14 @@ function collectExportRows(data) {
   if (Array.isArray(resp) && resp.length) {
     resp.forEach(function(item, index) {
       if (!item.respuesta) return;
+      var dedupeKey = [
+        String(item.orden == null ? "" : item.orden).trim(),
+        String(item.id_pregunta || "").trim().toLowerCase(),
+        String(item.pregunta || "").trim().toLowerCase(),
+        String(item.respuesta || "").trim().toLowerCase()
+      ].join("|");
+      if (seenResponseKeys[dedupeKey]) return;
+      seenResponseKeys[dedupeKey] = true;
       rows.push({
         section: "Respuestas",
         field: (item.id_pregunta || ("P" + (index + 1))) + " - " + (item.pregunta || "Pregunta"),
