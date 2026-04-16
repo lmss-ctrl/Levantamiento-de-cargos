@@ -211,7 +211,11 @@ async function loginConPassword() {
   try {
     const data = await postJson(WEBHOOK_AUTH, {rol:appState.rol, password:pwd});
     if (!data.ok) { renderMessage("boxLoginMessage","error", data.mensaje||"Contraseña incorrecta."); return; }
-    appState.tokenSesion = data.token_sesion||"";
+    appState.tokenSesion = data.token_sesion || data.token || "";
+    if (!appState.tokenSesion) {
+      renderMessage("boxLoginMessage","error","No se recibió un token de sesión válido.");
+      return;
+    }
     persistSession();
     document.getElementById("adminRolLabel").textContent =
       appState.rol === "admin" ? "Administrador" : "Consultor LMSS";
