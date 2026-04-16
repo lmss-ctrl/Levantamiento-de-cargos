@@ -30,32 +30,56 @@ const SESSION_KEY = "levantamiento_cargos_front_session_v1";
 const DRAFT_KEY = "levantamiento_cargos_front_draft_v1";
 let isSubmittingAnswer = false;
 
+function getStorageTargets() {
+  var stores = [];
+  try { if (window.sessionStorage) stores.push(window.sessionStorage); } catch {}
+  try { if (window.localStorage) stores.push(window.localStorage); } catch {}
+  return stores;
+}
+
 function persistSession() {
+  var payload = JSON.stringify({
+    rol: appState.rol || "",
+    tokenSesion: appState.tokenSesion || "",
+    identificadorColaborador: appState.identificadorColaborador || "",
+    codigoExpediente: appState.codigoExpediente || "",
+    preguntaActualId: appState.preguntaActualId || ""
+  });
   try {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      rol: appState.rol || "",
-      tokenSesion: appState.tokenSesion || "",
-      identificadorColaborador: appState.identificadorColaborador || "",
-      codigoExpediente: appState.codigoExpediente || "",
-      preguntaActualId: appState.preguntaActualId || ""
-    }));
+    getStorageTargets().forEach(function(store) {
+      store.setItem(SESSION_KEY, payload);
+    });
   } catch {}
 }
 
 function clearSession() {
   try {
-    sessionStorage.removeItem(SESSION_KEY);
-    sessionStorage.removeItem(DRAFT_KEY);
+    getStorageTargets().forEach(function(store) {
+      store.removeItem(SESSION_KEY);
+      store.removeItem(DRAFT_KEY);
+    });
   } catch {}
 }
 
 function loadPersistedSession() {
-  try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
+  for (const store of getStorageTargets()) {
+    try {
+      const raw = store.getItem(SESSION_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {}
   }
+  return null;
+}
+
+function ensureAdminToken() {
+  if (appState.tokenSesion) return true;
+  const persisted = loadPersistedSession();
+  if (persisted && persisted.tokenSesion) {
+    appState.tokenSesion = persisted.tokenSesion;
+    if (!appState.rol && persisted.rol) appState.rol = persisted.rol;
+    return true;
+  }
+  return false;
 }
 
 function saveDraft() {
@@ -116,6 +140,7 @@ function waitMs(ms) {
 async function postJson(url, payload, retries) {
   if (retries == null) retries = 1;
   const headers = {"Content-Type":"application/json"};
+  if (url === WEBHOOK_ADMIN) ensureAdminToken();
   if (appState.tokenSesion) headers["X-Session-Token"] = appState.tokenSesion;
   const res = await fetch(url, {
     method:"POST",
@@ -769,6 +794,10 @@ function entregableLabel(key) {
 
 window.exportarExpediente = function(codigo, btnEl) {
   var btn = btnEl || null, orig = btn ? btn.innerHTML : "";
+  if (!ensureAdminToken()) {
+    alert("La sesión administrativa no está disponible. Inicia sesión nuevamente antes de exportar.");
+    return;
+  }
   if (btn) { btn.innerHTML = 'Procesando...'; btn.disabled = true; }
   postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
   .then(function(d){
@@ -826,6 +855,10 @@ window.exportarExpediente = function(codigo, btnEl) {
 
 window.exportarCSV = function(codigo, btnEl) {
   var btn = btnEl || null, orig = btn ? btn.innerHTML : "";
+  if (!ensureAdminToken()) {
+    alert("La sesión administrativa no está disponible. Inicia sesión nuevamente antes de exportar.");
+    return;
+  }
   if (btn) { btn.innerHTML='Exportando...'; btn.disabled=true; }
   postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
   .then(function(d){
