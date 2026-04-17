@@ -1,4 +1,4 @@
-﻿const WEBHOOK_URL   = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos";
+const WEBHOOK_URL   = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos";
 const WEBHOOK_AUTH  = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos-auth";
 const WEBHOOK_ADMIN = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos-admin";
 
@@ -885,3 +885,120 @@ window.exportarCSV = function(codigo, btnEl) {
 
 showScreen("Login");
 
+
+
+// ═══════════════════════════════════════════════════════════════
+// MÓDULO CLIENTE — Vista resumen de la empresa en el proceso
+// ═══════════════════════════════════════════════════════════════
+
+async function loadClienteResumen() {
+  const body = document.getElementById('clienteCargosBody');
+  const msgBox = document.getElementById('boxClienteMessage');
+  if (body) body.innerHTML = '<tr><td colspan="6" class="px-5 py-8 text-center text-sm text-zinc-400">Cargando...</td></tr>';
+  if (msgBox) msgBox.classList.add('hidden');
+
+  try {
+    const token = ensureAdminToken();
+
+    // Llamadas en paralelo: expedientes + configuración empresa
+    const [resExp, resCfg] = await Promise.all([
+      postJson(WEBHOOK_ADMIN, { accion: 'listar_expedientes', rol: adminRol }, token),
+      postJson(WEBHOOK_ADMIN, { accion: 'get_configuracion_empresa', rol: adminRol }, token)
+    ]);
+
+    // ── Datos de empresa ──────────────────────────────────────────
+    const cfg = resCfg || {};
+    const nombre = cfg.nombre || cfg.empresa || 'Sin configurar';
+    const sector = cfg.sector || '—';
+    const tamano = cfg.tamano || cfg.tamaño || '—';
+    const contexto = cfg.contexto || '—';
+
+    setText('clienteNombre', nombre);
+    setText('clienteSectorTamano', sector + (tamano !== '—' ? ' · ' + tamano : ''));
+    setText('clienteContexto', contexto);
+
+    // ── Stats del proceso ─────────────────────────────────────────
+    const expedientes = resExp?.expedientes || [];
+    const total = expedientes.length;
+    const completados = expedientes.filter(e => e.estado === 'Cerrado').length;
+    const enCurso = expedientes.filter(e => e.estado === 'En curso').length;
+    const avancePct = total > 0 ? Math.round((completados / total) * 100) : 0;
+
+    setText('clienteTotal', total);
+    setText('clienteCompletados', completados);
+    setText('clienteEnCurso', enCurso);
+    setText('clienteAvance', avancePct + '%');
+    setText('clienteProgresoPct', avancePct + '%');
+
+    const bar = document.getElementById('clienteProgresoBar');
+    if (bar) bar.style.width = avancePct + '%';
+
+    // ── Tabla de cargos ───────────────────────────────────────────
+    if (!body) return;
+
+    if (expedientes.length === 0) {
+      body.innerHTML = '<tr><td colspan="6" class="px-5 py-8 text-center text-sm text-zinc-400">No hay expedientes registrados.</td></tr>';
+      return;
+    }
+
+    const estadoTag = (estado) => {
+      if (estado === 'Cerrado') return '<span class="tag" style="background:#dcfce7;color:#16a34a">Completado</span>';
+      if (estado === 'En curso') return '<span class="tag" style="background:#fef9c3;color:#854d0e">En curso</span>';
+      return '<span class="tag" style="background:#f4f4f5;color:#71717a">' + (estado || 'Pendiente') + '</span>';
+    };
+
+    const progresoBar = (pct) => {
+      const p = Math.min(100, Math.max(0, Number(pct) || 0));
+      return `<div style="display:flex;align-items:center;gap:6px">
+        <div style="flex:1;height:4px;border-radius:9999px;background:#e4e4e7;min-width:60px">
+          <div style="height:4px;border-radius:9999px;background:#9333ea;width:${p}%"></div>
+        </div>
+        <span class="mono text-xs text-zinc-500">${p}%</span>
+      </div>`;
+    };
+
+    body.innerHTML = expedientes.map(e => `
+      <tr class="border-b border-zinc-50 hover:bg-zinc-50 transition-colors">
+        <td class="px-5 py-3 mono text-xs text-zinc-500">${e.codigo || '—'}</td>
+        <td class="px-5 py-3 text-sm font-medium text-zinc-800">${e.cargo || '—'}</td>
+        <td class="px-5 py-3 text-sm text-zinc-600">${e.nombre || '—'}</td>
+        <td class="px-5 py-3 text-sm text-zinc-500">${e.area || '—'}</td>
+        <td class="px-5 py-3">${progresoBar(e.progreso)}</td>
+        <td class="px-5 py-3">${estadoTag(e.estado)}</td>
+      </tr>`).join('');
+
+  } catch (err) {
+    console.error('[loadClienteResumen]', err);
+    if (msgBox) {
+      msgBox.className = 'mt-4 p-4 rounded-xl text-sm text-red-700' ;
+      msgBox.style.background = '#fef2f2';
+      msgBox.textContent = 'Error al cargar datos del cliente: ' + err.message;
+      msgBox.classList.remove('hidden');
+    }
+  }
+}
+
+// Patch de showAdminSection para incluir sección Cliente
+const __origShowAdminSection = showAdminSection;
+showAdminSection = function(section) {
+  __origShowAdminSection(section);
+  // Activar nav Cliente
+  const navCliente = document.getElementById('navCliente');
+  if (navCliente) {
+    if (section === 'Cliente') {
+      navCliente.classList.add('active');
+    } else {
+      navCliente.classList.remove('active');
+    }
+  }
+  // Mostrar/ocultar sección Cliente
+  const secCliente = document.getElementById('sectionCliente');
+  if (secCliente) {
+    if (section === 'Cliente') {
+      secCliente.classList.remove('hidden');
+      loadClienteResumen();
+    } else {
+      secCliente.classList.add('hidden');
+    }
+  }
+};
