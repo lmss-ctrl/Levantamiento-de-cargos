@@ -78,7 +78,14 @@ renderAnswerInput = function() {
 
   if (txt) txt.value = "";
 
-  const ops = normalizeQuestionOptions(appState.preguntaOpciones);
+  const FALLBACK_OPTIONS = {
+    P07: ["Si", "No"],
+    P09: ["Estratégico", "Táctico", "Operativo", "Administrativo"],
+    P41: ["Alto", "Medio", "Bajo"]
+  };
+  const dynamicOps = normalizeQuestionOptions(appState.preguntaOpciones);
+  const fallbackOps = FALLBACK_OPTIONS[appState.preguntaActualId] || [];
+  const ops = dynamicOps.length ? dynamicOps : fallbackOps;
   const isSelection = tipo === "Si/No" || tipo === "Seleccion unica";
 
   btns.innerHTML = "";
