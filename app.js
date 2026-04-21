@@ -26,6 +26,100 @@ const appState = {
   cargo:"", area:"", jefeInmediato:"", nombreEntrevistado:""
 };
 
+function normalizeQuestionOptions(raw) {
+  if (Array.isArray(raw)) {
+    return raw
+      .map(function(item) { return String(item == null ? "" : item).trim(); })
+      .filter(Boolean);
+  }
+
+  if (raw == null) return [];
+
+  return String(raw)
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map(function(item) { return item.trim(); })
+    .filter(Boolean);
+}
+
+applyState = function(data) {
+  renderMessage("boxMessage", "", "");
+  const prevQuestionId = appState.preguntaActualId || "";
+
+  appState.codigoExpediente = data.codigo_expediente ?? "";
+  appState.preguntaActualId = data.pregunta_actual_id ?? "";
+  appState.preguntaActualTexto = data.pregunta_actual ?? "";
+  appState.preguntaAyuda = data.ayuda ?? "";
+  appState.identificadorColaborador =
+    data.identificador_colaborador || appState.identificadorColaborador || "";
+  appState.preguntaTipo = data.tipo_respuesta || "Texto largo";
+  appState.preguntaOpciones = normalizeQuestionOptions(data.opciones);
+  appState.progreso = Number(data.progreso || 0);
+  appState.estadoExpediente = data.estado_expediente || appState.estadoExpediente || "En curso";
+  appState.cargo = data.cargo_actual || appState.cargo || "Levantamiento de cargos";
+  appState.area = data.area || appState.area || "";
+  appState.jefeInmediato = data.jefe_inmediato || appState.jefeInmediato || "";
+  appState.nombreEntrevistado = data.nombre_colaborador || appState.nombreEntrevistado || "";
+  appState.resumenIA = data.ultima_respuesta_resumida || data.resumen_ia || "";
+
+  if (prevQuestionId && appState.preguntaActualId && prevQuestionId !== appState.preguntaActualId) {
+    clearDraft();
+  }
+
+  persistSession();
+};
+
+renderAnswerInput = function() {
+  const tipo = appState.preguntaTipo;
+  const ta = document.getElementById("answerTextarea");
+  const btns = document.getElementById("answerButtons");
+  const txt = document.getElementById("txtRespuesta");
+
+  if (txt) txt.value = "";
+
+  const ops = normalizeQuestionOptions(appState.preguntaOpciones);
+  const isSelection = tipo === "Si/No" || tipo === "Seleccion unica";
+
+  btns.innerHTML = "";
+
+  if (isSelection || ops.length) {
+    ta.classList.add("hidden");
+    btns.classList.remove("hidden");
+    btns.innerHTML = ops.map(function(opt, i) {
+      return `<button class="answer-btn" data-idx="${i}">${opt}</button>`;
+    }).join("");
+
+    btns.querySelectorAll(".answer-btn").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        selectOpt(this, this.textContent);
+      });
+    });
+  } else {
+    btns.classList.add("hidden");
+    ta.classList.remove("hidden");
+    setTimeout(function() {
+      const input = document.getElementById("txtRespuesta");
+      if (input) input.focus();
+    }, 80);
+  }
+
+  restoreDraft();
+};
+
+window.addEventListener("load", function() {
+  const persisted = loadPersistedSession();
+  if (!persisted) return;
+  if (persisted.rol === "admin" || persisted.rol === "consultor") return;
+  if (!persisted.identificadorColaborador) return;
+
+  selectRole("colaborador");
+  renderMessage("boxLoginMessage", "info", "Se encontro una sesion reciente. Retomando entrevista...");
+  setTimeout(function() {
+    loginColaborador();
+  }, 0);
+});
+
 const SESSION_KEY = "levantamiento_cargos_front_session_v1";
 const DRAFT_KEY = "levantamiento_cargos_front_draft_v1";
 let isSubmittingAnswer = false;
@@ -691,8 +785,7 @@ window.addEventListener("load", function() {
   }
 
   if (persisted.identificadorColaborador) {
-    selectRole("colaborador");
-    renderMessage("boxLoginMessage","info","Se encontró una sesión reciente. Puedes retomar la entrevista.");
+    return;
   }
 });
 
