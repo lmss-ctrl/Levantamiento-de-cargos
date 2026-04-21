@@ -348,6 +348,7 @@ function setStyle(id, prop, val) { const e = document.getElementById(id); if (e)
 function applyState(data) {
   // Limpiar cualquier mensaje de error previo al recibir respuesta exitosa
   renderMessage("boxMessage","","");
+  const prevQuestionId = appState.preguntaActualId || "";
   appState.codigoExpediente    = data.codigo_expediente   || "";
   appState.preguntaActualId    = data.pregunta_actual_id  || "";
   appState.preguntaActualTexto = data.pregunta_actual     || "";
@@ -362,6 +363,9 @@ function applyState(data) {
   appState.jefeInmediato = data.jefe_inmediato  || appState.jefeInmediato || "";
   appState.nombreEntrevistado  = data.nombre_colaborador  || appState.nombreEntrevistado || "";
   appState.resumenIA           = data.ultima_respuesta_resumida || data.resumen_ia || "";
+  if (prevQuestionId && appState.preguntaActualId && prevQuestionId !== appState.preguntaActualId) {
+    clearDraft();
+  }
   persistSession();
 }
 
@@ -416,7 +420,6 @@ function renderAnswerInput() {
 
   // Opciones hardcoded por pregunta
   const OPCIONES_FIJAS = {
-    P04: ["Abastecimiento","Logística","SAC","Calidad","Comercial","Administración","Otro"],
     P07: ["Si","No"],
     P09: ["Estratégico","Táctico","Operativo","Administrativo"],
     P41: ["Alto","Medio","Bajo"]
@@ -547,6 +550,16 @@ async function submitAnswer() {
       showScreen("Final"); return;
     }
     if (data.ok) { clearDraft(); applyState(data); renderInterviewView(); return; }
+    if (!data.ok && (data.tipo === "respuesta_insuficiente" || data.error === "respuesta_insuficiente")) {
+      renderMessage(
+        "boxMessage",
+        "warning",
+        data.message || data.mensaje || "Amplía tu respuesta con un poco más de detalle."
+      );
+      const input = document.getElementById("txtRespuesta");
+      if (input) input.focus();
+      return;
+    }
     if (data.error==="expediente_en_procesamiento") {
       renderMessage("boxMessage","warning", data.mensaje||"Expediente en procesamiento, espera unos segundos.");
       return;
@@ -567,7 +580,7 @@ async function submitAnswer() {
     } else {
       console.error("[submitAnswer catch]", e.message);
     }
-    // NUNCA llamar tryRecover aquí Ã¢â‚¬â€ evita el mensaje falso
+    // NUNCA llamar tryRecover aquí: evita el mensaje falso
   } finally {
     isSubmittingAnswer = false;
     btn.disabled = false;
