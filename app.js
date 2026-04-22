@@ -677,11 +677,17 @@ async function submitAnswer() {
         sin_ejemplos:     "Da un ejemplo concreto de lo que haces en tu cargo.",
         sin_proceso:      "Describe como lo haces paso a paso.",
         evasion:          "La respuesta no corresponde a lo preguntado. Puedes intentarlo de nuevo?",
-        muy_vaga:         "Agrega un dato concreto: numero, herramienta o ejemplo especifico.",
+        muy_vaga:         "Agrega un dato concreto: numero, herramienta, frecuencia o ejemplo especifico.",
+        sin_relacion:     "La respuesta no describe actividades laborales reales. Intenta responder con tareas concretas de tu cargo.",
       };
-      const msgFinal = (data.tipo_problema && MENSAJES_TIPO[data.tipo_problema])
-        ? MENSAJES_TIPO[data.tipo_problema]
-        : (data.message || data.mensaje || "Amplia tu respuesta con un poco mas de detalle.");
+      const sugerenciaIA = String(data.message || data.mensaje || "").trim();
+      const msgFinal = sugerenciaIA
+        ? sugerenciaIA
+        : (
+            (data.tipo_problema && MENSAJES_TIPO[data.tipo_problema])
+              ? MENSAJES_TIPO[data.tipo_problema]
+              : "Amplia tu respuesta con un poco mas de detalle."
+          );
       isSubmittingAnswer = false;
       btn.disabled = false;
       spinner.classList.add("hidden");
