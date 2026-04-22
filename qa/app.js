@@ -23,7 +23,9 @@ const appState = {
   preguntaActualId:"", preguntaActualTexto:"",
   preguntaAyuda:"", preguntaTipo:"Texto largo", preguntaOpciones:[],
   progreso:0, estadoExpediente:"", resumenIA:"",
-  cargo:"", area:"", jefeInmediato:"", nombreEntrevistado:""
+  cargo:"", area:"", jefeInmediato:"", nombreEntrevistado:"",
+  _intentoPreguntaActual: 1,
+  _respuestaAnteriorActual: ""
 };
 
 function normalizeQuestionOptions(raw) {
@@ -63,9 +65,11 @@ applyState = function(data) {
   appState.nombreEntrevistado = data.nombre_colaborador || appState.nombreEntrevistado || "";
   appState.resumenIA = data.ultima_respuesta_resumida || data.resumen_ia || "";
 
-  if (prevQuestionId && appState.preguntaActualId && prevQuestionId !== appState.preguntaActualId) {
-    clearDraft();
-  }
+if (prevQuestionId && appState.preguntaActualId && prevQuestionId !== appState.preguntaActualId) {
+  appState._intentoPreguntaActual   = 1;
+  appState._respuestaAnteriorActual = "";
+  clearDraft();
+}
 
   persistSession();
 };
@@ -640,9 +644,11 @@ async function submitAnswer() {
   renderMessage("boxMessage","info","Guardando respuesta...");
   try {
     const data = await postJson(WEBHOOK_URL, {
-      codigo_expediente: appState.codigoExpediente,
+      codigo_expediente:          appState.codigoExpediente,
       pregunta_actual_id_enviada: appState.preguntaActualId,
-      respuesta
+      respuesta,
+      intento_numero:             appState._intentoPreguntaActual   || 1,
+      respuesta_anterior:         appState._respuestaAnteriorActual || "",
     });
     if (data.ok && data.estado==="listo_para_cierre") {
       clearDraft();
@@ -652,11 +658,20 @@ async function submitAnswer() {
     }
     if (data.ok) { clearDraft(); applyState(data); renderInterviewView(); return; }
     if (!data.ok && (data.tipo === "respuesta_insuficiente" || data.error === "respuesta_insuficiente")) {
-      renderMessage(
-        "boxMessage",
-        "warning",
-        data.message || data.mensaje || "Amplía tu respuesta con un poco más de detalle."
-      );
+      appState._respuestaAnteriorActual = respuesta;
+      appState._intentoPreguntaActual   = (appState._intentoPreguntaActual || 1) + 1;
+      const MENSAJES_TIPO = {
+        sin_numeros:      "🔢 Esta pregunta espera cantidades o tiempos. ¿Puedes agregar un número aproximado?",
+        sin_herramientas: "🛠️ Menciona los sistemas o programas que usas para esta actividad.",
+        sin_ejemplos:     "📋 Da un ejemplo concreto de lo que haces en tu cargo.",
+        sin_proceso:      "🔄 Describe cómo lo haces paso a paso.",
+        evasion:          "↩️ La respuesta no corresponde a lo preguntado. ¿Puedes intentarlo de nuevo?",
+        muy_vaga:         "💬 Agrega un dato concreto: número, herramienta o ejemplo específico.",
+      };
+      const msgFinal = (data.tipo_problema && MENSAJES_TIPO[data.tipo_problema])
+        ? MENSAJES_TIPO[data.tipo_problema]
+        : (data.message || data.mensaje || "Amplía tu respuesta con un poco más de detalle.");
+      renderMessage("boxMessage", "warning", msgFinal);
       const input = document.getElementById("txtRespuesta");
       if (input) input.focus();
       return;
