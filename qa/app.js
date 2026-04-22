@@ -23,189 +23,26 @@ const appState = {
   preguntaActualId:"", preguntaActualTexto:"",
   preguntaAyuda:"", preguntaTipo:"Texto largo", preguntaOpciones:[],
   progreso:0, estadoExpediente:"", resumenIA:"",
-  cargo:"", area:"", jefeInmediato:"", nombreEntrevistado:"", nombreJefeInmediato:"",
+  cargo:"", area:"", jefeInmediato:"", nombreEntrevistado:"",
   _intentoPreguntaActual: 1,
   _respuestaAnteriorActual: ""
 };
 
-function repairPossibleMojibake(value) {
-  const text = String(value == null ? "" : value);
-  if (!/[ÂÃâ]/.test(text)) return text;
-  try {
-    const bytes = Uint8Array.from(text, function(ch) {
-      return ch.charCodeAt(0) & 0xFF;
-    });
-    const repaired = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return repaired || text;
-  } catch {
-    return text;
-  }
-}
-
 function normalizeQuestionOptions(raw) {
   if (Array.isArray(raw)) {
     return raw
-      .map(function(item) { return repairPossibleMojibake(item).trim(); })
+      .map(function(item) { return String(item == null ? "" : item).trim(); })
       .filter(Boolean);
   }
 
   if (raw == null) return [];
 
-  return repairPossibleMojibake(raw)
+  return String(raw)
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .split("\n")
     .map(function(item) { return item.trim(); })
     .filter(Boolean);
-}
-
-function normalizeComparableValue(value) {
-  return String(value || "")
-    .toLowerCase()
-    .trim()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ");
-}
-
-function getAuxQuestionConfig(questionId) {
-  const map = {
-    P02: {
-      mode: "other_only",
-      auxInputId: "txtCargoActualOtro",
-      auxPayloadKey: "cargo_actual_otro",
-      selectPayloadKey: "cargo_actual_select",
-      auxLabel: "Si elegiste Otro, escribe tu cargo actual",
-      auxPlaceholder: "Ej. Coordinador de bodega"
-    },
-    P04: {
-      mode: "other_only",
-      auxInputId: "txtDepartamentoOtro",
-      auxPayloadKey: "departamento_otro",
-      selectPayloadKey: "departamento_select",
-      auxLabel: "Si elegiste Otro, escribe el departamento",
-      auxPlaceholder: "Ej. Planeación estratégica"
-    },
-    P05: {
-      mode: "boss_name",
-      auxInputId: "txtNombreJefeInmediato",
-      auxPayloadKey: "nombre_jefe_inmediato",
-      selectPayloadKey: "jefe_inmediato_select",
-      auxLabel: "Nombre del jefe inmediato",
-      auxPlaceholder: "Ej. Juan Pérez"
-    }
-  };
-  return map[questionId] || null;
-}
-
-function ensureAuxFieldsContainer() {
-  let container = document.getElementById("answerAuxFields");
-  if (container) return container;
-
-  const anchor = document.getElementById("answerButtons") || document.getElementById("answerTextarea");
-  if (!anchor || !anchor.parentNode) return null;
-
-  container = document.createElement("div");
-  container.id = "answerAuxFields";
-  container.className = "hidden mt-3 space-y-3";
-  anchor.parentNode.insertBefore(container, anchor.nextSibling);
-  return container;
-}
-
-function getCurrentAuxValues() {
-  return {
-    cargo_actual_otro: document.getElementById("txtCargoActualOtro")?.value?.trim() || "",
-    departamento_otro: document.getElementById("txtDepartamentoOtro")?.value?.trim() || "",
-    nombre_jefe_inmediato: document.getElementById("txtNombreJefeInmediato")?.value?.trim() || ""
-  };
-}
-
-function syncSelectedAnswerButton() {
-  const selectedValue = document.getElementById("txtRespuesta")?.value?.trim() || "";
-  document.querySelectorAll(".answer-btn").forEach(function(btn) {
-    const active = btn.textContent.trim() === selectedValue;
-    btn.classList.toggle("selected", active);
-  });
-}
-
-function renderAuxiliaryAnswerFields() {
-  const container = ensureAuxFieldsContainer();
-  if (!container) return;
-
-  const cfg = getAuxQuestionConfig(appState.preguntaActualId);
-  if (!cfg) {
-    container.classList.add("hidden");
-    container.innerHTML = "";
-    return;
-  }
-
-  const selectedValue = document.getElementById("txtRespuesta")?.value?.trim() || "";
-  const selectedIsOther = normalizeComparableValue(selectedValue) === "otro";
-  const shouldShow = cfg.mode === "boss_name" || selectedIsOther;
-
-  if (!shouldShow) {
-    container.classList.add("hidden");
-    container.innerHTML = "";
-    return;
-  }
-
-  const auxValues = getCurrentAuxValues();
-  const presetValue = cfg.auxPayloadKey === "nombre_jefe_inmediato"
-    ? (auxValues.nombre_jefe_inmediato || appState.nombreJefeInmediato || "")
-    : (auxValues[cfg.auxPayloadKey] || "");
-
-  container.innerHTML = `
-    <div>
-      <label class="form-label">${cfg.auxLabel}</label>
-      <input
-        id="${cfg.auxInputId}"
-        type="text"
-        class="input-light"
-        placeholder="${cfg.auxPlaceholder}"
-        value="${presetValue.replace(/"/g, "&quot;")}"
-      />
-    </div>
-  `;
-  container.classList.remove("hidden");
-
-  const auxInput = document.getElementById(cfg.auxInputId);
-  if (auxInput) {
-    auxInput.addEventListener("input", function() {
-      if (cfg.auxPayloadKey === "nombre_jefe_inmediato") {
-        appState.nombreJefeInmediato = this.value.trim();
-      }
-      saveDraft();
-    });
-  }
-}
-
-function buildAnswerSubmission() {
-  const respuestaBase = document.getElementById("txtRespuesta")?.value?.trim() || "";
-  const cfg = getAuxQuestionConfig(appState.preguntaActualId);
-  const payload = { respuesta: respuestaBase };
-
-  if (!cfg) return payload;
-
-  const auxValues = getCurrentAuxValues();
-
-  if (cfg.selectPayloadKey) payload[cfg.selectPayloadKey] = respuestaBase;
-
-  if (cfg.mode === "other_only" && normalizeComparableValue(respuestaBase) === "otro") {
-    const detalle = auxValues[cfg.auxPayloadKey];
-    if (!detalle) throw new Error("Completa el detalle de la opción Otro antes de continuar.");
-    payload[cfg.auxPayloadKey] = detalle;
-    payload.respuesta = `Otro - ${detalle}`;
-  }
-
-  if (cfg.mode === "boss_name") {
-    const nombreJefe = auxValues.nombre_jefe_inmediato;
-    if (!respuestaBase) throw new Error("Selecciona el cargo o tipo de jefe inmediato.");
-    if (!nombreJefe) throw new Error("Escribe el nombre del jefe inmediato.");
-    payload.nombre_jefe_inmediato = nombreJefe;
-    payload.respuesta = `${respuestaBase} - ${nombreJefe}`;
-  }
-
-  return payload;
 }
 
 applyState = function(data) {
@@ -214,20 +51,19 @@ applyState = function(data) {
 
   appState.codigoExpediente = data.codigo_expediente ?? "";
   appState.preguntaActualId = data.pregunta_actual_id ?? "";
-  appState.preguntaActualTexto = repairPossibleMojibake(data.pregunta_actual ?? "");
-  appState.preguntaAyuda = repairPossibleMojibake(data.ayuda ?? "");
+  appState.preguntaActualTexto = data.pregunta_actual ?? "";
+  appState.preguntaAyuda = data.ayuda ?? "";
   appState.identificadorColaborador =
     data.identificador_colaborador || appState.identificadorColaborador || "";
   appState.preguntaTipo = data.tipo_respuesta || "Texto largo";
   appState.preguntaOpciones = normalizeQuestionOptions(data.opciones);
   appState.progreso = Number(data.progreso || 0);
   appState.estadoExpediente = data.estado_expediente || appState.estadoExpediente || "En curso";
-  appState.cargo = repairPossibleMojibake(data.cargo_actual || appState.cargo || "Levantamiento de cargos");
-  appState.area = repairPossibleMojibake(data.departamento || data.area || appState.area || "");
-  appState.jefeInmediato = repairPossibleMojibake(data.jefe_inmediato || appState.jefeInmediato || "");
-  appState.nombreEntrevistado = repairPossibleMojibake(data.nombre_colaborador || appState.nombreEntrevistado || "");
-  appState.nombreJefeInmediato = repairPossibleMojibake(data.nombre_jefe_inmediato || appState.nombreJefeInmediato || "");
-  appState.resumenIA = repairPossibleMojibake(data.ultima_respuesta_resumida || data.resumen_ia || "");
+  appState.cargo = data.cargo_actual || appState.cargo || "Levantamiento de cargos";
+  appState.area = data.area || appState.area || "";
+  appState.jefeInmediato = data.jefe_inmediato || appState.jefeInmediato || "";
+  appState.nombreEntrevistado = data.nombre_colaborador || appState.nombreEntrevistado || "";
+  appState.resumenIA = data.ultima_respuesta_resumida || data.resumen_ia || "";
 
 if (prevQuestionId && appState.preguntaActualId && prevQuestionId !== appState.preguntaActualId) {
   appState._intentoPreguntaActual   = 1;
@@ -279,7 +115,6 @@ renderAnswerInput = function() {
     }, 80);
   }
 
-  renderAuxiliaryAnswerFields();
   restoreDraft();
 };
 
@@ -356,14 +191,10 @@ function saveDraft() {
   try {
     const answerEl = document.getElementById("txtRespuesta");
     const value = answerEl ? answerEl.value : "";
-    const auxValues = getCurrentAuxValues();
     sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
       codigoExpediente: appState.codigoExpediente || "",
       preguntaActualId: appState.preguntaActualId || "",
-      value: value || "",
-      cargo_actual_otro: auxValues.cargo_actual_otro || "",
-      departamento_otro: auxValues.departamento_otro || "",
-      nombre_jefe_inmediato: auxValues.nombre_jefe_inmediato || ""
+      value: value || ""
     }));
   } catch {}
 }
@@ -378,17 +209,6 @@ function restoreDraft() {
     if (draft.codigoExpediente === (appState.codigoExpediente || "") &&
         draft.preguntaActualId === (appState.preguntaActualId || "")) {
       answerEl.value = draft.value || "";
-      syncSelectedAnswerButton();
-      renderAuxiliaryAnswerFields();
-      if (draft.cargo_actual_otro && document.getElementById("txtCargoActualOtro")) {
-        document.getElementById("txtCargoActualOtro").value = draft.cargo_actual_otro;
-      }
-      if (draft.departamento_otro && document.getElementById("txtDepartamentoOtro")) {
-        document.getElementById("txtDepartamentoOtro").value = draft.departamento_otro;
-      }
-      if (draft.nombre_jefe_inmediato && document.getElementById("txtNombreJefeInmediato")) {
-        document.getElementById("txtNombreJefeInmediato").value = draft.nombre_jefe_inmediato;
-      }
     }
   } catch {}
 }
@@ -744,8 +564,6 @@ function selectOpt(btn, value) {
   document.querySelectorAll(".answer-btn").forEach(b => b.classList.remove("selected"));
   btn.classList.add("selected");
   document.getElementById("txtRespuesta").value = value;
-  renderAuxiliaryAnswerFields();
-  saveDraft();
 }
 
 function renderInterviewView() {
@@ -836,24 +654,10 @@ async function submitAnswer() {
   btnLabel.textContent = "Guardando...";
   renderMessage("boxMessage","info","Guardando respuesta...");
   try {
-    let answerPayload;
-    try {
-      answerPayload = buildAnswerSubmission();
-    } catch (validationError) {
-      renderMessage("boxMessage","warning", validationError.message || "Completa los datos requeridos antes de continuar.");
-      return;
-    }
-
     const data = await postJson(WEBHOOK_URL, {
       codigo_expediente:          appState.codigoExpediente,
       pregunta_actual_id_enviada: appState.preguntaActualId,
-      respuesta:                  answerPayload.respuesta,
-      cargo_actual_select:        answerPayload.cargo_actual_select || "",
-      cargo_actual_otro:          answerPayload.cargo_actual_otro || "",
-      departamento_select:        answerPayload.departamento_select || "",
-      departamento_otro:          answerPayload.departamento_otro || "",
-      jefe_inmediato_select:      answerPayload.jefe_inmediato_select || "",
-      nombre_jefe_inmediato:      answerPayload.nombre_jefe_inmediato || "",
+      respuesta,
       intento_numero:             appState._intentoPreguntaActual   || 1,
       respuesta_anterior:         appState._respuestaAnteriorActual || "",
     });
@@ -959,7 +763,7 @@ function goBackToStart() {
     preguntaActualId:"",preguntaActualTexto:"",preguntaAyuda:"",
     preguntaTipo:"Texto largo",preguntaOpciones:[],progreso:0,
     estadoExpediente:"",cargo:"",area:"",jefeInmediato:"",nombreEntrevistado:"",
-    nombreJefeInmediato:"",resumenIA:"",faseActual:""
+    resumenIA:"",faseActual:""
   });
   ["txtLoginCedula","txtLoginPassword","txtRespuesta"].forEach(id => {
     const el=document.getElementById(id); if(el) el.value="";
