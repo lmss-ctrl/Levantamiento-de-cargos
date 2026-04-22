@@ -259,13 +259,24 @@ async function postJson(url, payload, retries) {
       await waitMs(350);
       return postJson(url, payload, retries - 1);
     }
-    throw new Error("Respuesta vacía del servidor");
+    throw new Error("Respuesta vacia del servidor");
   }
   let data;
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error("Respuesta no válida del servidor");
+    const normalized = String(text || "").trim();
+    try {
+      data = JSON.parse(normalized);
+      if (typeof data === "string") {
+        data = JSON.parse(data);
+      }
+    } catch {
+      throw new Error("Respuesta no valida del servidor");
+    }
+  }
+  if (typeof data === "string") {
+    data = JSON.parse(data);
   }
   if (!res.ok) {
     throw new Error(data?.mensaje || ("Error HTTP " + res.status));
@@ -661,16 +672,20 @@ async function submitAnswer() {
       appState._respuestaAnteriorActual = respuesta;
       appState._intentoPreguntaActual   = (appState._intentoPreguntaActual || 1) + 1;
       const MENSAJES_TIPO = {
-        sin_numeros:      "🔢 Esta pregunta espera cantidades o tiempos. ¿Puedes agregar un número aproximado?",
-        sin_herramientas: "🛠️ Menciona los sistemas o programas que usas para esta actividad.",
-        sin_ejemplos:     "📋 Da un ejemplo concreto de lo que haces en tu cargo.",
-        sin_proceso:      "🔄 Describe cómo lo haces paso a paso.",
-        evasion:          "↩️ La respuesta no corresponde a lo preguntado. ¿Puedes intentarlo de nuevo?",
-        muy_vaga:         "💬 Agrega un dato concreto: número, herramienta o ejemplo específico.",
+        sin_numeros:      "Esta pregunta espera cantidades o tiempos. Puedes agregar un numero aproximado?",
+        sin_herramientas: "Menciona los sistemas o programas que usas para esta actividad.",
+        sin_ejemplos:     "Da un ejemplo concreto de lo que haces en tu cargo.",
+        sin_proceso:      "Describe como lo haces paso a paso.",
+        evasion:          "La respuesta no corresponde a lo preguntado. Puedes intentarlo de nuevo?",
+        muy_vaga:         "Agrega un dato concreto: numero, herramienta o ejemplo especifico.",
       };
       const msgFinal = (data.tipo_problema && MENSAJES_TIPO[data.tipo_problema])
         ? MENSAJES_TIPO[data.tipo_problema]
-        : (data.message || data.mensaje || "Amplía tu respuesta con un poco más de detalle.");
+        : (data.message || data.mensaje || "Amplia tu respuesta con un poco mas de detalle.");
+      isSubmittingAnswer = false;
+      btn.disabled = false;
+      spinner.classList.add("hidden");
+      btnLabel.textContent = "Guardar y continuar ->";
       renderMessage("boxMessage", "warning", msgFinal);
       const input = document.getElementById("txtRespuesta");
       if (input) input.focus();
