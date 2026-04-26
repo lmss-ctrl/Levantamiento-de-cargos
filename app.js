@@ -557,15 +557,16 @@ async function loadDashboard() {
 
 async function loadExpedientes() {
   const tbody = document.getElementById("tblExpedientes");
-  tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-10 text-center text-sm text-zinc-400">
+  tbody.innerHTML = `<tr><td colspan="9" class="px-5 py-10 text-center text-sm text-zinc-400">
     <span class="pulse inline-block w-2 h-2 rounded-full bg-zinc-300 mr-2"></span>Cargando...</td></tr>`;
   try {
     const data = await postJson(WEBHOOK_ADMIN, {accion:"listar_expedientes"});
     if (!data.ok || !data.expedientes?.length) {
-      tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-10 text-center text-sm text-zinc-400">No hay expedientes registrados.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="px-5 py-10 text-center text-sm text-zinc-400">No hay expedientes registrados.</td></tr>`;
       return;
     }
     tbody.innerHTML = data.expedientes.map(exp => {
+      const quality = deriveQualityMetrics(exp);
       const cls = exp.estado==="Cerrado"   ? "color:#166534;background:#f0fdf4;border:1px solid #bbf7d0" :
                   exp.estado==="En curso"  ? "color:#92400e;background:#fffbeb;border:1px solid #fde68a" :
                                              "color:#52525b;background:#f4f4f6;border:1px solid #e4e4e7";
@@ -573,14 +574,12 @@ async function loadExpedientes() {
         <td class="px-5 py-3 mono text-xs text-zinc-400">${exp.codigo||"—"}</td>
         <td class="px-5 py-3 text-sm font-medium text-zinc-800">${exp.nombre||"—"}</td>
         <td class="px-5 py-3 text-sm text-zinc-600">${exp.cargo||"—"}</td>
+        <td class="px-5 py-3">${renderMetricBar(exp.progreso, "linear-gradient(90deg,#9333ea,#ec4899)")}</td>
         <td class="px-5 py-3">
-          <div class="flex items-center gap-2">
-            <div class="h-1.5 rounded-full w-16" style="background:#e4e4e7">
-              <div class="h-1.5 rounded-full" style="width:${exp.progreso||0}%;background:linear-gradient(90deg,#9333ea,#ec4899)"></div>
-            </div>
-            <span class="text-xs text-zinc-400 mono">${exp.progreso||0}%</span>
-          </div>
+          ${renderMetricBar(quality.valuePct, "linear-gradient(90deg,#0f766e,#14b8a6)")}
+          <div class="mt-1 text-[11px] text-zinc-400">${quality.source === "backend" ? "dato calculado" : "estimado visual"}</div>
         </td>
+        <td class="px-5 py-3">${buildPill(quality.confidence.label, quality.confidence.colors)}</td>
         <td class="px-5 py-3">
           <span class="tag px-2 py-1 rounded-lg" style="${cls}">${exp.estado||"—"}</span>
         </td>
@@ -589,7 +588,7 @@ async function loadExpedientes() {
         <td class="px-5 py-3">${exp.estado==="Cerrado"?'<button data-codigo="'+exp.codigo+'" onclick="exportarExpediente(this.dataset.codigo, this)" style="background:#9333ea;color:#fff;border:none;cursor:pointer;padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600">&#8595; PDF</button> <button data-codigo=\"'+exp.codigo+'\" onclick=\"exportarCSV(this.dataset.codigo, this)\" style=\"background:#0891b2;color:#fff;border:none;cursor:pointer;padding:5px 10px;border-radius:8px;font-size:12px;font-weight:600\">&#8595; CSV</button>':'&mdash;'}</td></tr>`;
     }).join("");
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-8 text-center text-sm text-red-400">Error: ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="px-5 py-8 text-center text-sm text-red-400">Error: ${e.message}</td></tr>`;
   }
 }
 
@@ -640,6 +639,94 @@ async function saveAccesos() {
 /* ── Safe DOM helpers ── */
 function setText(id, val) { const e = document.getElementById(id); if (e) e.textContent = val; }
 function setStyle(id, prop, val) { const e = document.getElementById(id); if (e) e.style[prop] = val; }
+function clampPercent(value) {
+  return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+}
+function pickFirstNumber(obj, keys) {
+  for (const key of keys) {
+    const raw = obj?.[key];
+    const num = Number(raw);
+    if (raw !== "" && raw != null && Number.isFinite(num)) return num;
+  }
+  return null;
+}
+function pickFirstText(obj, keys) {
+  for (const key of keys) {
+    const value = obj?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+function buildPill(label, colors) {
+  return `<span class="tag px-2 py-1 rounded-lg" style="background:${colors.bg};color:${colors.text};border:1px solid ${colors.border}">${label}</span>`;
+}
+function getConfidenceMeta(valuePct) {
+  if (valuePct >= 80) {
+    return { label: "Alta", shortLabel: "Alta", colors: { bg:"#dcfce7", text:"#166534", border:"#bbf7d0" } };
+  }
+  if (valuePct >= 60) {
+    return { label: "Media", shortLabel: "Media", colors: { bg:"#fef3c7", text:"#92400e", border:"#fde68a" } };
+  }
+  return { label: "Baja", shortLabel: "Baja", colors: { bg:"#fee2e2", text:"#b91c1c", border:"#fecaca" } };
+}
+function deriveQualityMetrics(exp) {
+  const directValue = pickFirstNumber(exp, [
+    "valor_pct","valor","porcentaje_valor","porcentaje_valor_respondido",
+    "valor_respuestas_pct","calidad_pct","porcentaje_calidad","quality_pct","score_valor"
+  ]);
+  const progressPct = clampPercent(exp?.progreso);
+  const high = Math.max(0, pickFirstNumber(exp, ["respuestas_altas","altas","cantidad_altas"]) || 0);
+  const medium = Math.max(0, pickFirstNumber(exp, ["respuestas_medias","medias","cantidad_medias"]) || 0);
+  const low = Math.max(0, pickFirstNumber(exp, ["respuestas_bajas","bajas","cantidad_bajas","preguntas_criticas_debiles"]) || 0);
+  const repreguntas = Math.max(0, pickFirstNumber(exp, ["repreguntas","total_repreguntas","cantidad_repreguntas"]) || 0);
+  const totalRated = high + medium + low;
+
+  let valuePct;
+  let source = directValue != null ? "backend" : "estimada";
+  if (directValue != null) {
+    valuePct = clampPercent(directValue);
+  } else if (totalRated > 0) {
+    valuePct = clampPercent(((high * 100) + (medium * 70) + (low * 35)) / totalRated);
+  } else {
+    const heuristicBase = (progressPct * 0.65) + (exp?.estado === "Cerrado" ? 20 : 8) - Math.min(repreguntas * 3, 18);
+    valuePct = clampPercent(heuristicBase);
+  }
+
+  const explicitConfidence = pickFirstText(exp, ["confianza_entregable","confianza","nivel_confianza"]);
+  let confidence = getConfidenceMeta(valuePct);
+  if (explicitConfidence) {
+    const normalized = explicitConfidence.toLowerCase();
+    if (normalized.includes("alta")) confidence = getConfidenceMeta(85);
+    else if (normalized.includes("media")) confidence = getConfidenceMeta(65);
+    else if (normalized.includes("baja")) confidence = getConfidenceMeta(35);
+  }
+
+  const weakCritical = Math.max(0, pickFirstNumber(exp, [
+    "preguntas_criticas_debiles","criticas_debiles","preguntas_debiles","respuestas_criticas_bajas"
+  ]) || 0);
+  const ready = valuePct >= 80 && weakCritical === 0;
+
+  return {
+    valuePct,
+    source,
+    high,
+    medium,
+    low,
+    repreguntas,
+    weakCritical,
+    ready,
+    confidence
+  };
+}
+function renderMetricBar(pct, colors) {
+  const value = clampPercent(pct);
+  return `<div style="display:flex;align-items:center;gap:6px">
+    <div style="flex:1;height:4px;border-radius:9999px;background:#e4e4e7;min-width:60px">
+      <div style="height:4px;border-radius:9999px;background:${colors};width:${value}%"></div>
+    </div>
+    <span class="mono text-xs text-zinc-500">${value}%</span>
+  </div>`;
+}
 /* ── Interview state ── */
 function applyState(data) {
   // Limpiar cualquier mensaje de error previo al recibir respuesta exitosa
@@ -1268,21 +1355,36 @@ async function loadClienteResumen() {
     const completados = expedientes.filter(e => e.estado === 'Cerrado').length;
     const enCurso = expedientes.filter(e => e.estado === 'En curso').length;
     const avancePct = total > 0 ? Math.round((completados / total) * 100) : 0;
+    const qualityRows = expedientes.map(deriveQualityMetrics);
+    const valorPromedio = qualityRows.length
+      ? clampPercent(qualityRows.reduce((sum, item) => sum + item.valuePct, 0) / qualityRows.length)
+      : 0;
+    const listosEntregable = qualityRows.filter(item => item.ready).length;
+    const confianzaAlta = qualityRows.filter(item => item.confidence.label === 'Alta').length;
+    const confianzaMedia = qualityRows.filter(item => item.confidence.label === 'Media').length;
+    const fuenteBackend = qualityRows.length > 0 && qualityRows.every(item => item.source === 'backend');
 
     setText('clienteTotal', total);
     setText('clienteCompletados', completados);
     setText('clienteEnCurso', enCurso);
     setText('clienteAvance', avancePct + '%');
+    setText('clienteValor', valorPromedio + '%');
+    setText('clienteListos', listosEntregable);
     setText('clienteProgresoPct', avancePct + '%');
+    setText('clienteValorPct', valorPromedio + '%');
+    setText('clienteConfianzaResumen', `Confianza general: ${confianzaAlta > 0 ? `${confianzaAlta} alta` : confianzaMedia > 0 ? `${confianzaMedia} media` : 'predominio bajo'}`);
+    setText('clienteValorFuente', `Fuente: ${fuenteBackend ? 'backend' : 'estimada'}`);
 
     const bar = document.getElementById('clienteProgresoBar');
     if (bar) bar.style.width = avancePct + '%';
+    const valueBar = document.getElementById('clienteValorBar');
+    if (valueBar) valueBar.style.width = valorPromedio + '%';
 
     // ── Tabla de cargos ───────────────────────────────────────────
     if (!body) return;
 
     if (expedientes.length === 0) {
-      body.innerHTML = '<tr><td colspan="6" class="px-5 py-8 text-center text-sm text-zinc-400">No hay expedientes registrados.</td></tr>';
+      body.innerHTML = '<tr><td colspan="8" class="px-5 py-8 text-center text-sm text-zinc-400">No hay expedientes registrados.</td></tr>';
       return;
     }
 
@@ -1292,25 +1394,23 @@ async function loadClienteResumen() {
       return '<span class="tag" style="background:#f4f4f5;color:#71717a">' + (estado || 'Pendiente') + '</span>';
     };
 
-    const progresoBar = (pct) => {
-      const p = Math.min(100, Math.max(0, Number(pct) || 0));
-      return `<div style="display:flex;align-items:center;gap:6px">
-        <div style="flex:1;height:4px;border-radius:9999px;background:#e4e4e7;min-width:60px">
-          <div style="height:4px;border-radius:9999px;background:#9333ea;width:${p}%"></div>
-        </div>
-        <span class="mono text-xs text-zinc-500">${p}%</span>
-      </div>`;
-    };
-
-    body.innerHTML = expedientes.map(e => `
+    body.innerHTML = expedientes.map((e, index) => {
+      const quality = qualityRows[index];
+      return `
       <tr class="border-b border-zinc-50 hover:bg-zinc-50 transition-colors">
         <td class="px-5 py-3 mono text-xs text-zinc-500">${e.codigo || '—'}</td>
         <td class="px-5 py-3 text-sm font-medium text-zinc-800">${e.cargo || '—'}</td>
         <td class="px-5 py-3 text-sm text-zinc-600">${e.nombre || '—'}</td>
         <td class="px-5 py-3 text-sm text-zinc-500">${e.area || '—'}</td>
-        <td class="px-5 py-3">${progresoBar(e.progreso)}</td>
+        <td class="px-5 py-3">${renderMetricBar(e.progreso, "linear-gradient(90deg,#9333ea,#ec4899)")}</td>
+        <td class="px-5 py-3">
+          ${renderMetricBar(quality.valuePct, "linear-gradient(90deg,#0f766e,#14b8a6)")}
+          <div class="mt-1 text-[11px] text-zinc-400">${quality.source === 'backend' ? 'dato calculado' : 'estimado visual'}</div>
+        </td>
+        <td class="px-5 py-3">${buildPill(quality.confidence.label, quality.confidence.colors)}</td>
         <td class="px-5 py-3">${estadoTag(e.estado)}</td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
 
   } catch (err) {
     console.error('[loadClienteResumen]', err);
