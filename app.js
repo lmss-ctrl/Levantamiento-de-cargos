@@ -1334,8 +1334,8 @@ async function loadClienteResumen() {
 
     // Llamadas en paralelo: expedientes + configuración empresa
     const [resExp, resCfg] = await Promise.all([
-      postJson(WEBHOOK_ADMIN, { accion: 'listar_expedientes', rol: adminRol }, token),
-      postJson(WEBHOOK_ADMIN, { accion: 'get_configuracion_empresa', rol: adminRol }, token)
+      postJson(WEBHOOK_ADMIN, { accion: 'listar_expedientes', rol: appState.rol }, token),
+      postJson(WEBHOOK_ADMIN, { accion: 'get_configuracion_empresa', rol: appState.rol }, token)
     ]);
 
     // ── Datos de empresa ──────────────────────────────────────────
