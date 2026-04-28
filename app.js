@@ -567,6 +567,11 @@ async function loadExpedientes() {
     }
     tbody.innerHTML = data.expedientes.map(exp => {
       const quality = deriveQualityMetrics(exp);
+      const rowValuePct = typeof exp.valor_pct === "number" ? clampPercent(exp.valor_pct) : quality.valuePct;
+      const rowSource = typeof exp.valor_pct === "number" ? "backend" : quality.source;
+      const rowConfidence = exp.confianza_entregable
+        ? (/alta/i.test(exp.confianza_entregable) ? getConfidenceMeta(85) : /media/i.test(exp.confianza_entregable) ? getConfidenceMeta(65) : getConfidenceMeta(35))
+        : quality.confidence;
       const cls = exp.estado==="Cerrado"   ? "color:#166534;background:#f0fdf4;border:1px solid #bbf7d0" :
                   exp.estado==="En curso"  ? "color:#92400e;background:#fffbeb;border:1px solid #fde68a" :
                                              "color:#52525b;background:#f4f4f6;border:1px solid #e4e4e7";
@@ -576,10 +581,10 @@ async function loadExpedientes() {
         <td class="px-5 py-3 text-sm text-zinc-600">${exp.cargo||"—"}</td>
         <td class="px-5 py-3">${renderMetricBar(exp.progreso, "linear-gradient(90deg,#9333ea,#ec4899)")}</td>
         <td class="px-5 py-3">
-          ${renderMetricBar(quality.valuePct, "linear-gradient(90deg,#0f766e,#14b8a6)")}
-          <div class="mt-1 text-[11px] text-zinc-400">${quality.source === "backend" ? "dato calculado" : "estimado visual"}</div>
+          ${renderMetricBar(rowValuePct, "linear-gradient(90deg,#0f766e,#14b8a6)")}
+          <div class="mt-1 text-[11px] text-zinc-400">${rowSource === "backend" ? "dato calculado" : "estimado visual"}</div>
         </td>
-        <td class="px-5 py-3">${buildPill(quality.confidence.label, quality.confidence.colors)}</td>
+        <td class="px-5 py-3">${buildPill(rowConfidence.label, rowConfidence.colors)}</td>
         <td class="px-5 py-3">
           <span class="tag px-2 py-1 rounded-lg" style="${cls}">${exp.estado||"—"}</span>
         </td>
@@ -1396,6 +1401,11 @@ async function loadClienteResumen() {
 
     body.innerHTML = expedientes.map((e, index) => {
       const quality = qualityRows[index];
+      const rowValuePct = typeof e.valor_pct === "number" ? clampPercent(e.valor_pct) : quality.valuePct;
+      const rowSource = typeof e.valor_pct === "number" ? "backend" : quality.source;
+      const rowConfidence = e.confianza_entregable
+        ? (/alta/i.test(e.confianza_entregable) ? getConfidenceMeta(85) : /media/i.test(e.confianza_entregable) ? getConfidenceMeta(65) : getConfidenceMeta(35))
+        : quality.confidence;
       return `
       <tr class="border-b border-zinc-50 hover:bg-zinc-50 transition-colors">
         <td class="px-5 py-3 mono text-xs text-zinc-500">${e.codigo || '—'}</td>
@@ -1404,10 +1414,10 @@ async function loadClienteResumen() {
         <td class="px-5 py-3 text-sm text-zinc-500">${e.area || '—'}</td>
         <td class="px-5 py-3">${renderMetricBar(e.progreso, "linear-gradient(90deg,#9333ea,#ec4899)")}</td>
         <td class="px-5 py-3">
-          ${renderMetricBar(quality.valuePct, "linear-gradient(90deg,#0f766e,#14b8a6)")}
-          <div class="mt-1 text-[11px] text-zinc-400">${quality.source === 'backend' ? 'dato calculado' : 'estimado visual'}</div>
+          ${renderMetricBar(rowValuePct, "linear-gradient(90deg,#0f766e,#14b8a6)")}
+          <div class="mt-1 text-[11px] text-zinc-400">${rowSource === 'backend' ? 'dato calculado' : 'estimado visual'}</div>
         </td>
-        <td class="px-5 py-3">${buildPill(quality.confidence.label, quality.confidence.colors)}</td>
+        <td class="px-5 py-3">${buildPill(rowConfidence.label, rowConfidence.colors)}</td>
         <td class="px-5 py-3">${estadoTag(e.estado)}</td>
       </tr>`;
     }).join('');
