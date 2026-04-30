@@ -30,7 +30,7 @@ const appState = {
 
 function repairPossibleMojibake(value) {
   const text = String(value == null ? "" : value);
-  if (!/[ÂÃâ]/.test(text)) return text;
+  if (!/[ÂÃâ][-¿]/.test(text)) return text;
   try {
     const bytes = Uint8Array.from(text, function(ch) {
       return ch.charCodeAt(0) & 0xFF;
