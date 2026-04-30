@@ -882,14 +882,21 @@ async function submitAnswer() {
         muy_vaga:         "Agrega un dato concreto: numero, herramienta, frecuencia o ejemplo especifico.",
         sin_relacion:     "La respuesta no describe actividades laborales reales. Intenta responder con tareas concretas de tu cargo.",
       };
-      const sugerenciaIA = String(data.message || data.mensaje || "").trim();
+      const mensajeServidor = String(data.message || data.mensaje || "").trim();
+      const sugerenciaIA = String(data.sugerencia || "").trim();
+      const mensajeGenerico = /amplia tu respuesta|agrega un poco mas de contexto|un poco mas de detalle/i.test(mensajeServidor);
+      const razon = String(data.razon_corta || "").trim();
+      const faltantes = Array.isArray(data.datos_faltantes)
+        ? data.datos_faltantes.filter(Boolean).join(", ")
+        : String(data.datos_faltantes || "").trim();
       const msgFinal = sugerenciaIA
-        ? sugerenciaIA
-        : (
-            (data.tipo_problema && MENSAJES_TIPO[data.tipo_problema])
-              ? MENSAJES_TIPO[data.tipo_problema]
-              : "Amplia tu respuesta con un poco mas de detalle."
-          );
+        || (!mensajeGenerico ? mensajeServidor : "")
+        || (razon || faltantes
+          ? ["Motivo: " + razon, faltantes ? "Agrega: " + faltantes : ""].filter(Boolean).join(" ")
+          : "")
+        || ((data.tipo_problema && MENSAJES_TIPO[data.tipo_problema])
+          ? MENSAJES_TIPO[data.tipo_problema]
+          : "Amplia tu respuesta con un poco mas de detalle.");
       isSubmittingAnswer = false;
       btn.disabled = false;
       spinner.classList.add("hidden");
