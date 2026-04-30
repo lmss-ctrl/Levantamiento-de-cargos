@@ -889,6 +889,14 @@ async function submitAnswer() {
       const faltantes = Array.isArray(data.datos_faltantes)
         ? data.datos_faltantes.filter(Boolean).join(", ")
         : String(data.datos_faltantes || "").trim();
+      if (data.pregunta_actual_id) appState.preguntaActualId = data.pregunta_actual_id;
+      if (data.pregunta_actual) appState.preguntaActualTexto = repairPossibleMojibake(data.pregunta_actual);
+      if (Object.prototype.hasOwnProperty.call(data, "ayuda")) appState.preguntaAyuda = repairPossibleMojibake(data.ayuda || "");
+      if (data.tipo_respuesta) appState.preguntaTipo = data.tipo_respuesta;
+      if (Array.isArray(data.opciones)) appState.preguntaOpciones = normalizeQuestionOptions(data.opciones);
+      renderInterviewView();
+      const inputAfterRefresh = document.getElementById("txtRespuesta");
+      if (inputAfterRefresh) inputAfterRefresh.value = respuesta;
       const msgFinal = sugerenciaIA
         || (!mensajeGenerico ? mensajeServidor : "")
         || (razon || faltantes
