@@ -30,15 +30,21 @@ const appState = {
 
 function repairPossibleMojibake(value) {
   const text = String(value == null ? "" : value);
-  if (!/[ÂÃâ][-¿]/.test(text)) return text;
+  // Fix CJK: caracteres chinos generados por conversión incorrecta anterior
+  const CJK_MAP = {'贸':'ó','茅':'é','铆':'í','谩':'á','煤':'ú','卤':'ñ','邊':'á','芬':'é'};
+  let result = text;
+  if (/[一-鿿]/.test(result)) {
+    result = result.replace(/[一-鿿]/g, function(ch) { return CJK_MAP[ch] || ch; });
+  }
+  if (!/[ÂÃâ][-¿]/.test(result)) return result;
   try {
-    const bytes = Uint8Array.from(text, function(ch) {
+    const bytes = Uint8Array.from(result, function(ch) {
       return ch.charCodeAt(0) & 0xFF;
     });
     const repaired = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return repaired || text;
+    return repaired || result;
   } catch {
-    return text;
+    return result;
   }
 }
 
