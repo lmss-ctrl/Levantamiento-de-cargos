@@ -1095,10 +1095,17 @@ function downloadCsvFile(filename, content) {
   setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
 }
 
+function normalizeEntregablesForExport(entregables) {
+  var ent = Object.assign({}, entregables || {});
+  if (!ent.manual_cargo && ent.manual_de_cargo) ent.manual_cargo = ent.manual_de_cargo;
+  if (!ent.perfil_seleccion && ent.perfil_de_seleccion) ent.perfil_seleccion = ent.perfil_de_seleccion;
+  return ent;
+}
+
 function collectExportRows(data) {
   var rows = [];
   var exp = data.expediente || {};
-  var ent = data.entregables || {};
+  var ent = normalizeEntregablesForExport(data.entregables || {});
   var resp = data.respuestas || [];
   var seenResponseKeys = {};
   var canonicalEntKeys = [
@@ -1172,7 +1179,7 @@ window.exportarExpediente = function(codigo, btnEl) {
   postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
   .then(function(d){
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
-    var exp=d.expediente||{},ent=d.entregables||{};
+    var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{});
     var orderedEntKeys = [
       "perfil_seleccion",
       "manual_cargo",
