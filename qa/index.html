@@ -471,7 +471,10 @@
           <h1 class="text-xl font-semibold text-zinc-900">Expedientes</h1>
           <p class="text-sm text-zinc-500 mt-0.5">Historial de entrevistas registradas</p>
         </div>
-        <button onclick="loadExpedientes()" class="btn-ghost-light text-sm px-4 py-2">↻ Actualizar</button>
+        <div class="flex items-center gap-2">
+          <button onclick="generarEntregablesFinalizados(this)" class="btn-outline-brand text-sm px-4 py-2 admin-only">Generar finalizados</button>
+          <button onclick="loadExpedientes()" class="btn-ghost-light text-sm px-4 py-2">↻ Actualizar</button>
+        </div>
       </div>
       <div class="card overflow-hidden">
         <div class="overflow-x-auto">

@@ -1,6 +1,8 @@
 const WEBHOOK_URL   = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos-qa";
 const WEBHOOK_AUTH  = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos-auth-qa";
 const WEBHOOK_ADMIN = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos-admin-qa";
+const WEBHOOK_ENTREGABLES = "https://n8n.lmsmartsolutions.com/webhook/generar-entregables-piloto";
+const DATABASE_ID_ENTREGABLES_QA = "35343c8107928084a4dbe48c77dac6e3";
 
 const PHASES = [
   { label:"Datos básicos",          range:[1,9],   eta:"~3 min" },
@@ -569,8 +571,10 @@ async function loadExpedientes() {
     const data = await postJson(WEBHOOK_ADMIN, {accion:"listar_expedientes"});
     if (!data.ok || !data.expedientes?.length) {
       tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-10 text-center text-sm text-zinc-400">No hay expedientes registrados.</td></tr>`;
+      appState.expedientesAdmin = [];
       return;
     }
+    appState.expedientesAdmin = data.expedientes;
     tbody.innerHTML = data.expedientes.map(exp => {
       const cls = exp.estado==="Cerrado"   ? "color:#166534;background:#f0fdf4;border:1px solid #bbf7d0" :
                   exp.estado==="En curso"  ? "color:#92400e;background:#fffbeb;border:1px solid #fde68a" :
@@ -1095,6 +1099,64 @@ function downloadCsvFile(filename, content) {
   setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
 }
 
+function sleep(ms) {
+  return new Promise(function(resolve){ setTimeout(resolve, ms); });
+}
+
+window.generarEntregablesFinalizados = async function(btnEl) {
+  var btn = btnEl || null;
+  var orig = btn ? btn.innerHTML : "";
+  if (!ensureAdminToken()) {
+    alert("La sesiÃ³n administrativa no estÃ¡ disponible. Inicia sesiÃ³n nuevamente.");
+    return;
+  }
+  var expedientes = Array.isArray(appState.expedientesAdmin) && appState.expedientesAdmin.length
+    ? appState.expedientesAdmin
+    : [];
+  if (!expedientes.length) {
+    var data = await postJson(WEBHOOK_ADMIN, {accion:"listar_expedientes"});
+    expedientes = data.expedientes || [];
+    appState.expedientesAdmin = expedientes;
+  }
+  var finalizados = expedientes.filter(function(exp) {
+    return String(exp.estado || "").toLowerCase() === "cerrado" && exp.codigo;
+  });
+  if (!finalizados.length) {
+    alert("No hay expedientes cerrados para generar.");
+    return;
+  }
+  if (!confirm("Se generarÃ¡n entregables para " + finalizados.length + " expedientes cerrados. Este proceso puede tardar varios minutos. Â¿Continuar?")) {
+    return;
+  }
+  if (btn) { btn.innerHTML = "Generando 0/" + finalizados.length; btn.disabled = true; }
+  var ok = 0, fail = 0;
+  var errores = [];
+  for (var i = 0; i < finalizados.length; i++) {
+    var exp = finalizados[i];
+    if (btn) btn.innerHTML = "Generando " + (i + 1) + "/" + finalizados.length;
+    try {
+      var res = await postJson(WEBHOOK_ENTREGABLES, {
+        codigo_expediente: exp.codigo,
+        database_id_entregables_qa: DATABASE_ID_ENTREGABLES_QA
+      }, 0);
+      if (res && res.ok) ok++;
+      else {
+        fail++;
+        errores.push(exp.codigo + ": " + (res && (res.error_qa || res.mensaje || res.estado_generacion_qa) || "sin detalle"));
+      }
+    } catch (e) {
+      fail++;
+      errores.push(exp.codigo + ": " + e.message);
+    }
+    await sleep(1200);
+  }
+  if (btn) { btn.innerHTML = orig; btn.disabled = false; }
+  await loadExpedientes();
+  var msg = "GeneraciÃ³n finalizada. OK: " + ok + ". Con error: " + fail + ".";
+  if (errores.length) msg += "\n\nPrimeros errores:\n" + errores.slice(0, 8).join("\n");
+  alert(msg);
+};
+
 function normalizeEntregablesForExport(entregables) {
   var ent = Object.assign({}, entregables || {});
   if (!ent.manual_cargo && ent.manual_de_cargo) ent.manual_cargo = ent.manual_de_cargo;
@@ -1154,6 +1216,44 @@ function collectExportRows(data) {
   return rows;
 }
 
+function normalizeResponseItems(resp) {
+  if (!Array.isArray(resp)) return [];
+  var seen = {};
+  return resp
+    .filter(function(item){ return item && (item.respuesta || item.pregunta || item.id_pregunta); })
+    .map(function(item, index) {
+      return {
+        orden: Number(item.orden || index + 1),
+        id_pregunta: String(item.id_pregunta || ("P" + (index + 1))).trim(),
+        pregunta: String(item.pregunta || "Pregunta").trim(),
+        respuesta: String(item.respuesta || "").trim()
+      };
+    })
+    .sort(function(a, b){ return a.orden - b.orden; })
+    .filter(function(item) {
+      var key = [item.orden, item.id_pregunta.toLowerCase(), item.pregunta.toLowerCase(), item.respuesta.toLowerCase()].join("|");
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+}
+
+function renderQuestionAnswerAppendix(resp) {
+  var respuestas = normalizeResponseItems(resp);
+  if (!respuestas.length) return "";
+  var html = '<div style="break-before:page;page-break-before:always;margin-top:24px">';
+  html += '<h2 style="font-size:16px;font-weight:700;color:#27272a;margin:0 0 10px">Anexo: preguntas y respuestas</h2>';
+  respuestas.forEach(function(item) {
+    html += '<div style="border-bottom:1px solid #ececf0;padding:10px 0;break-inside:avoid;page-break-inside:avoid">';
+    html += '<div style="font-size:12px;font-weight:700;color:#7c3aed;margin-bottom:4px">' + escapeHtml(item.id_pregunta) + '</div>';
+    html += '<div style="font-size:13px;font-weight:700;color:#3f3f46;line-height:1.5;margin-bottom:5px">' + escapeHtml(item.pregunta) + '</div>';
+    html += '<div style="font-size:12.5px;color:#52525b;line-height:1.65;white-space:pre-wrap">' + escapeHtml(item.respuesta || "Sin respuesta registrada") + '</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
 function entregableLabel(key) {
   var labels = {
     perfil_seleccion: "Perfil de Selección",
@@ -1179,7 +1279,7 @@ window.exportarExpediente = function(codigo, btnEl) {
   postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
   .then(function(d){
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
-    var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{});
+    var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{}),resp=d.respuestas||[];
     var orderedEntKeys = [
       "perfil_seleccion",
       "manual_cargo",
@@ -1216,6 +1316,7 @@ window.exportarExpediente = function(codigo, btnEl) {
     orderedEntKeys.forEach(function(key){
       if (ent[key]) htm += sec(entregableLabel(key), ent[key]);
     });
+    htm+=renderQuestionAnswerAppendix(resp);
     htm+='<footer>Generado por LM Smart Solutions</footer>';
     htm+='</body></html>';
     var blob=new Blob([htm],{type:'text/html;charset=utf-8'});
