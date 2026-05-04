@@ -596,7 +596,7 @@ async function loadExpedientes() {
         </td>
         <td class="px-5 py-3 text-xs text-zinc-400">${exp.ultima_interaccion||"—"}</td>
       
-        <td class="px-5 py-3">${exp.estado==="Cerrado"?'<button data-codigo="'+exp.codigo+'" onclick="exportarExpediente(this.dataset.codigo, this)" style="background:#9333ea;color:#fff;border:none;cursor:pointer;padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600">&#8595; PDF</button> <button data-codigo=\"'+exp.codigo+'\" onclick=\"exportarCSV(this.dataset.codigo, this)\" style=\"background:#0891b2;color:#fff;border:none;cursor:pointer;padding:5px 10px;border-radius:8px;font-size:12px;font-weight:600\">&#8595; CSV</button>':'&mdash;'}</td></tr>`;
+        <td class="px-5 py-3">${exp.estado==="Cerrado"?'<button data-codigo="'+exp.codigo+'" onclick="generarEntregableExpediente(this.dataset.codigo, this)" style="background:#166534;color:#fff;border:none;cursor:pointer;padding:5px 10px;border-radius:8px;font-size:12px;font-weight:600">Gen.</button> <button data-codigo="'+exp.codigo+'" onclick="exportarExpediente(this.dataset.codigo, this)" style="background:#9333ea;color:#fff;border:none;cursor:pointer;padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600">&#8595; PDF</button> <button data-codigo=\"'+exp.codigo+'\" onclick=\"exportarCSV(this.dataset.codigo, this)\" style=\"background:#0891b2;color:#fff;border:none;cursor:pointer;padding:5px 10px;border-radius:8px;font-size:12px;font-weight:600\">&#8595; CSV</button>':'&mdash;'}</td></tr>`;
     }).join("");
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-8 text-center text-sm text-red-400">Error: ${e.message}</td></tr>`;
@@ -1103,6 +1103,35 @@ function sleep(ms) {
   return new Promise(function(resolve){ setTimeout(resolve, ms); });
 }
 
+window.generarEntregableExpediente = async function(codigo, btnEl) {
+  var btn = btnEl || null;
+  var orig = btn ? btn.innerHTML : "";
+  if (!ensureAdminToken()) {
+    alert("La sesion administrativa no esta disponible. Inicia sesion nuevamente.");
+    return;
+  }
+  if (!codigo) {
+    alert("No se encontro codigo de expediente para generar entregables.");
+    return;
+  }
+  if (btn) { btn.innerHTML = "..."; btn.disabled = true; }
+  try {
+    var res = await postJson(WEBHOOK_ENTREGABLES, {
+      codigo_expediente: codigo,
+      database_id_entregables_qa: DATABASE_ID_ENTREGABLES_QA
+    }, 0);
+    if (!res || !res.ok) {
+      throw new Error(res && (res.error_qa || res.mensaje || res.estado_generacion_qa) || "sin detalle");
+    }
+    alert("Entregables generados para " + codigo + ".");
+    await loadExpedientes();
+  } catch (e) {
+    alert("No se pudieron generar entregables para " + codigo + ": " + e.message);
+  } finally {
+    if (btn) { btn.innerHTML = orig; btn.disabled = false; }
+  }
+};
+
 window.generarEntregablesFinalizados = async function(btnEl) {
   var btn = btnEl || null;
   var orig = btn ? btn.innerHTML : "";
@@ -1125,7 +1154,7 @@ window.generarEntregablesFinalizados = async function(btnEl) {
     alert("No hay expedientes cerrados para generar.");
     return;
   }
-  if (!confirm("Se generarÃ¡n entregables para " + finalizados.length + " expedientes cerrados. Este proceso puede tardar varios minutos. Â¿Continuar?")) {
+  if (!confirm("Se generaran entregables 1x1 para " + finalizados.length + " expedientes cerrados, con pausa entre cada caso para proteger Notion. Este proceso puede tardar varios minutos. Continuar?")) {
     return;
   }
   if (btn) { btn.innerHTML = "Generando 0/" + finalizados.length; btn.disabled = true; }
@@ -1148,7 +1177,7 @@ window.generarEntregablesFinalizados = async function(btnEl) {
       fail++;
       errores.push(exp.codigo + ": " + e.message);
     }
-    await sleep(1200);
+    await sleep(5000);
   }
   if (btn) { btn.innerHTML = orig; btn.disabled = false; }
   await loadExpedientes();
