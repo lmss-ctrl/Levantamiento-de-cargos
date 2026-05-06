@@ -1283,6 +1283,124 @@ function renderQuestionAnswerAppendix(resp) {
   return html;
 }
 
+function normalizeMarkdownForPrint(value) {
+  var text = normalizeUtf8Text(value)
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+  var previous;
+  do {
+    previous = text;
+    text = text.replace(/\\text\{([^{}]*)\}/g, "$1");
+    text = text.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "$1 / $2");
+  } while (text !== previous);
+  return text
+    .replace(/\\\[/g, "")
+    .replace(/\\\]/g, "")
+    .replace(/\\\(/g, "")
+    .replace(/\\\)/g, "")
+    .replace(/\\times/g, "x")
+    .replace(/\\cdot/g, "x")
+    .replace(/\\%/g, "%");
+}
+
+function renderInlineMarkdown(value) {
+  return escapeHtml(value)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+function splitMarkdownTableRow(line) {
+  var cleaned = String(line || "").trim();
+  if (cleaned.charAt(0) === "|") cleaned = cleaned.slice(1);
+  if (cleaned.charAt(cleaned.length - 1) === "|") cleaned = cleaned.slice(0, -1);
+  return cleaned.split("|").map(function(cell){ return cell.trim(); });
+}
+
+function isMarkdownTableSeparator(line) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line || "");
+}
+
+function renderMarkdownTable(lines, start) {
+  var header = splitMarkdownTableRow(lines[start]);
+  var html = '<div class="md-table-wrap"><table class="md-table"><thead><tr>';
+  header.forEach(function(cell){ html += '<th>' + renderInlineMarkdown(cell) + '</th>'; });
+  html += '</tr></thead><tbody>';
+  var i = start + 2;
+  while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) {
+    var cells = splitMarkdownTableRow(lines[i]);
+    html += '<tr>';
+    for (var c = 0; c < header.length; c++) {
+      html += '<td>' + renderInlineMarkdown(cells[c] || "") + '</td>';
+    }
+    html += '</tr>';
+    i++;
+  }
+  html += '</tbody></table></div>';
+  return { html: html, next: i };
+}
+
+function renderMarkdownToHtml(value) {
+  var text = normalizeMarkdownForPrint(value);
+  var lines = text.split("\n");
+  var html = "";
+  var i = 0;
+
+  function isBlockBoundary(line, nextLine) {
+    return !line.trim() ||
+      /^#{1,4}\s+/.test(line) ||
+      /^-{3,}\s*$/.test(line.trim()) ||
+      /^[-*]\s+/.test(line) ||
+      (/\|/.test(line) && isMarkdownTableSeparator(nextLine || ""));
+  }
+
+  while (i < lines.length) {
+    var line = lines[i];
+    var trimmed = line.trim();
+    if (!trimmed) { i++; continue; }
+
+    if (/^#{1,4}\s+/.test(trimmed)) {
+      var level = Math.min((trimmed.match(/^#+/) || ["##"])[0].length, 4);
+      var tag = level <= 1 ? "h2" : (level === 2 ? "h3" : "h4");
+      html += '<' + tag + ' class="md-heading md-heading-' + level + '">' + renderInlineMarkdown(trimmed.replace(/^#{1,4}\s+/, "")) + '</' + tag + '>';
+      i++;
+      continue;
+    }
+
+    if (/^-{3,}\s*$/.test(trimmed)) {
+      html += '<hr class="md-hr">';
+      i++;
+      continue;
+    }
+
+    if (/\|/.test(line) && isMarkdownTableSeparator(lines[i + 1] || "")) {
+      var table = renderMarkdownTable(lines, i);
+      html += table.html;
+      i = table.next;
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      html += '<ul class="md-list">';
+      while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+        html += '<li>' + renderInlineMarkdown(lines[i].trim().replace(/^[-*]\s+/, "")) + '</li>';
+        i++;
+      }
+      html += '</ul>';
+      continue;
+    }
+
+    var paragraph = [trimmed];
+    i++;
+    while (i < lines.length && !isBlockBoundary(lines[i], lines[i + 1])) {
+      paragraph.push(lines[i].trim());
+      i++;
+    }
+    html += '<p class="md-p">' + renderInlineMarkdown(paragraph.join(" ")) + '</p>';
+  }
+
+  return html || '<p class="md-p"></p>';
+}
+
 function entregableLabel(key) {
   var labels = {
     perfil_seleccion: "Perfil de Selección",
@@ -1322,16 +1440,26 @@ window.exportarExpediente = function(codigo, btnEl) {
     ];
     var now=new Date().toLocaleDateString('es-CO',{year:'numeric',month:'long',day:'numeric'});
     function row(l,v){if(!v&&v!==0)return '';return '<tr><td style="font-weight:600;color:#52525b;width:220px;padding:6px 12px;vertical-align:top">'+escapeHtml(l)+'</td><td style="padding:6px 12px;white-space:pre-wrap">'+escapeHtml(v)+'</td></tr>';}
-    function sec(t,b){if(!b)return '';return '<div style="margin-top:20px"><h3 style="font-size:14px;font-weight:700;color:#7c3aed;border-bottom:2px solid #ede9fe;padding-bottom:5px;margin-bottom:8px">'+escapeHtml(t)+'</h3><p style="font-size:13px;line-height:1.8;white-space:pre-wrap;margin:0">'+escapeHtml(b)+'</p></div>';}
+    function sec(t,b){if(!b)return '';return '<section class="doc-section"><h2>'+escapeHtml(t)+'</h2><div class="markdown-body">'+renderMarkdownToHtml(b)+'</div></section>';}
     var htm='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reporte '+escapeHtml(exp.codigo||codigo)+'</title>';
-    htm+='<style>body{font-family:Arial,sans-serif;padding:32px;color:#18181b;margin:0}';
+    htm+='<style>body{font-family:Arial,sans-serif;padding:32px;color:#18181b;margin:0;font-size:13px;line-height:1.55}';
     htm+='.h{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;padding:22px 28px;border-radius:12px;margin-bottom:18px}';
     htm+='.h h1{font-size:20px;font-weight:700;margin:0 0 4px}.h p{margin:0;opacity:.85;font-size:13px}';
-    htm+='table{width:100%;border-collapse:collapse;font-size:13px}';
+    htm+='table{width:100%;border-collapse:collapse;font-size:12.5px}';
     htm+='td{border-bottom:1px solid #f0f0f0}tr:nth-child(even) td{background:#faf9ff}';
-    htm+='h2{font-size:14px;font-weight:700;color:#27272a;margin:16px 0 8px}';
+    htm+='h2{font-size:15px;font-weight:700;color:#27272a;margin:0 0 10px;border-bottom:2px solid #ede9fe;padding-bottom:5px}';
+    htm+='.doc-section{break-inside:auto;page-break-inside:auto;margin-top:24px}';
+    htm+='.markdown-body{font-size:12.8px;line-height:1.65;color:#27272a}';
+    htm+='.markdown-body .md-heading{color:#3f3f46;margin:14px 0 7px;line-height:1.3;break-after:avoid;page-break-after:avoid}';
+    htm+='.markdown-body .md-heading-1{font-size:15px}.markdown-body .md-heading-2{font-size:14px}.markdown-body .md-heading-3,.markdown-body .md-heading-4{font-size:13px}';
+    htm+='.md-p{margin:0 0 8px}.md-list{margin:0 0 10px 18px;padding:0}.md-list li{margin:3px 0}.md-hr{border:0;border-top:1px solid #e4e4e7;margin:12px 0}';
+    htm+='.md-table-wrap{max-width:100%;overflow:hidden;margin:8px 0 12px;break-inside:avoid;page-break-inside:avoid}';
+    htm+='.md-table{table-layout:fixed;border:1px solid #e4e4e7;font-size:10.5px;line-height:1.35}';
+    htm+='.md-table th{background:#f4f4f5;color:#3f3f46;text-align:left;font-weight:700;border:1px solid #e4e4e7;padding:5px;vertical-align:top;word-break:break-word}';
+    htm+='.md-table td{border:1px solid #e4e4e7;padding:5px;vertical-align:top;word-break:break-word;background:#fff}';
+    htm+='.md-table tr:nth-child(even) td{background:#fafafa}strong{font-weight:700}code{font-family:Consolas,monospace;background:#f4f4f5;border-radius:3px;padding:1px 3px}';
     htm+='footer{margin-top:28px;font-size:11px;color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}';
-    htm+='@media print{.h{-webkit-print-color-adjust:exact;print-color-adjust:exact}}';
+    htm+='@media print{.h{-webkit-print-color-adjust:exact;print-color-adjust:exact}body{padding:28px}.doc-section{break-inside:auto;page-break-inside:auto}.md-table-wrap{break-inside:avoid;page-break-inside:avoid}}';
     htm+='</style></head><body>';
     htm+='<div class="h"><h1>Levantamiento de Cargo</h1><p>'+escapeHtml(exp.cargo||'-')+' &middot; '+escapeHtml(exp.codigo||codigo)+' &middot; '+escapeHtml(now)+'</p></div>';
     htm+='<h2>Datos del Colaborador</h2><table>';
