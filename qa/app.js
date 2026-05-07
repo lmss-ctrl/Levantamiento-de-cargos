@@ -1304,6 +1304,14 @@ function filterResponsesForExpediente(resp, exp) {
   return { respuestas: respuestas, warning: "" };
 }
 
+function assertExportMatchesRequested(data, requestedCodigo) {
+  var exp = (data && data.expediente) || {};
+  var receivedCodigo = exp.codigo || exp.codigo_expediente || "";
+  if (requestedCodigo && receivedCodigo && normalizeLooseText(requestedCodigo) !== normalizeLooseText(receivedCodigo)) {
+    throw new Error("El servidor devolvió un expediente diferente al solicitado. Solicitado: " + requestedCodigo + ". Recibido: " + receivedCodigo + ".");
+  }
+}
+
 function renderQuestionAnswerAppendix(resp, exp, serverWarning) {
   var filtered = filterResponsesForExpediente(resp, exp || {});
   var respuestas = filtered.respuestas;
@@ -1468,6 +1476,7 @@ window.exportarExpediente = function(codigo, btnEl) {
   postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
   .then(function(d){
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
+    assertExportMatchesRequested(d, codigo);
     var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{}),resp=d.respuestas||[],serverWarning=String(d.advertencia_respuestas||d.warning_respuestas||d.warning||"").trim();
     var orderedEntKeys = [
       "perfil_seleccion",
@@ -1548,6 +1557,7 @@ window.exportarCSV = function(codigo, btnEl) {
   postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
   .then(function(d){
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
+    assertExportMatchesRequested(d, codigo);
     var rows = collectExportRows(d);
     var separator = ';';
     var header = ['Seccion','Campo','Valor'];
