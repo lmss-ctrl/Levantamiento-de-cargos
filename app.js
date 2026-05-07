@@ -1289,7 +1289,7 @@ function collectExportRows(data) {
   var rows = [];
   var exp = data.expediente || {};
   var ent = normalizeEntregablesForExport(data.entregables || {});
-  var resp = filterResponsesForExpediente(data.respuestas || [], exp).respuestas;
+  var resp = data.respuestas || [];
   var seenResponseKeys = {};
   var canonicalEntKeys = [
     "perfil_seleccion",
@@ -1347,8 +1347,7 @@ function normalizeResponseItems(resp) {
         orden: Number(item.orden || index + 1),
         id_pregunta: String(item.id_pregunta || ("P" + (index + 1))).trim(),
         pregunta: String(item.pregunta || "Pregunta").trim(),
-        respuesta: String(item.respuesta || "").trim(),
-        codigo_expediente: String(item.codigo_expediente || item.codigo || item.property_codigo_expediente || item["Código expediente"] || "").trim()
+        respuesta: String(item.respuesta || "").trim()
       };
     })
     .sort(function(a, b){ return a.orden - b.orden; })
@@ -1360,51 +1359,11 @@ function normalizeResponseItems(resp) {
     });
 }
 
-function normalizeLooseText(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function filterResponsesForExpediente(resp, exp) {
+function renderQuestionAnswerAppendix(resp) {
   var respuestas = normalizeResponseItems(resp);
-  var codigo = normalizeLooseText(exp && (exp.codigo || exp.codigo_expediente || ""));
-  if (codigo) {
-    var withCodigo = respuestas.filter(function(item){ return item.codigo_expediente; });
-    if (withCodigo.length) {
-      respuestas = withCodigo.filter(function(item){
-        return normalizeLooseText(item.codigo_expediente) === codigo;
-      });
-    }
-  }
-
-  var p01 = respuestas.find(function(item){
-    return normalizeLooseText(item.id_pregunta) === "p01";
-  });
-  var nombreExp = normalizeLooseText(exp && exp.nombre);
-  var nombreResp = normalizeLooseText(p01 && p01.respuesta);
-  if (nombreExp && nombreResp && nombreExp !== nombreResp) {
-    return {
-      respuestas: [],
-      warning: "Anexo omitido: las respuestas recibidas no coinciden con el colaborador del expediente."
-    };
-  }
-  return { respuestas: respuestas, warning: "" };
-}
-
-function renderQuestionAnswerAppendix(resp, exp) {
-  var filtered = filterResponsesForExpediente(resp, exp || {});
-  var respuestas = filtered.respuestas;
-  if (!respuestas.length && !filtered.warning) return "";
+  if (!respuestas.length) return "";
   var html = '<div style="break-before:page;page-break-before:always;margin-top:24px">';
   html += '<h2 style="font-size:16px;font-weight:700;color:#27272a;margin:0 0 10px">Anexo: preguntas y respuestas</h2>';
-  if (filtered.warning) {
-    html += '<p style="font-size:12px;color:#a16207;background:#fef9c3;border:1px solid #fde68a;padding:8px 10px;border-radius:6px">' + escapeHtml(filtered.warning) + '</p>';
-  }
   respuestas.forEach(function(item) {
     html += '<div style="border-bottom:1px solid #ececf0;padding:10px 0;break-inside:avoid;page-break-inside:avoid">';
     html += '<div style="font-size:12px;font-weight:700;color:#7c3aed;margin-bottom:4px">' + escapeHtml(item.id_pregunta) + '</div>';
@@ -1606,7 +1565,7 @@ window.exportarExpediente = function(codigo, btnEl) {
     orderedEntKeys.forEach(function(key){
       if (ent[key]) htm += sec(entregableLabel(key), ent[key]);
     });
-    htm+=renderQuestionAnswerAppendix(resp, exp);
+    htm+=renderQuestionAnswerAppendix(resp);
     htm+='<footer>Generado por LM Smart Solutions</footer>';
     htm+='</body></html>';
     var blob=new Blob([htm],{type:'text/html;charset=utf-8'});
