@@ -1304,15 +1304,14 @@ function filterResponsesForExpediente(resp, exp) {
   return { respuestas: respuestas, warning: "" };
 }
 
-function renderQuestionAnswerAppendix(resp, exp, serverWarning) {
+function renderQuestionAnswerAppendix(resp, exp) {
   var filtered = filterResponsesForExpediente(resp, exp || {});
   var respuestas = filtered.respuestas;
-  var warning = filtered.warning || String(serverWarning || "").trim();
-  if (!respuestas.length && !warning) return "";
+  if (!respuestas.length && !filtered.warning) return "";
   var html = '<div style="break-before:page;page-break-before:always;margin-top:24px">';
   html += '<h2 style="font-size:16px;font-weight:700;color:#27272a;margin:0 0 10px">Anexo: preguntas y respuestas</h2>';
-  if (warning) {
-    html += '<p style="font-size:12px;color:#a16207;background:#fef9c3;border:1px solid #fde68a;padding:8px 10px;border-radius:6px">' + escapeHtml(warning) + '</p>';
+  if (filtered.warning) {
+    html += '<p style="font-size:12px;color:#a16207;background:#fef9c3;border:1px solid #fde68a;padding:8px 10px;border-radius:6px">' + escapeHtml(filtered.warning) + '</p>';
   }
   respuestas.forEach(function(item) {
     html += '<div style="border-bottom:1px solid #ececf0;padding:10px 0;break-inside:avoid;page-break-inside:avoid">';
@@ -1468,7 +1467,7 @@ window.exportarExpediente = function(codigo, btnEl) {
   postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
   .then(function(d){
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
-    var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{}),resp=d.respuestas||[],serverWarning=String(d.advertencia_respuestas||d.warning_respuestas||d.warning||"").trim();
+    var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{}),resp=d.respuestas||[];
     var orderedEntKeys = [
       "perfil_seleccion",
       "manual_cargo",
@@ -1483,7 +1482,6 @@ window.exportarExpediente = function(codigo, btnEl) {
     var now=new Date().toLocaleDateString('es-CO',{year:'numeric',month:'long',day:'numeric'});
     function row(l,v){if(!v&&v!==0)return '';return '<tr><td style="font-weight:600;color:#52525b;width:220px;padding:6px 12px;vertical-align:top">'+escapeHtml(l)+'</td><td style="padding:6px 12px;white-space:pre-wrap">'+escapeHtml(v)+'</td></tr>';}
     function sec(t,b){if(!b)return '';return '<section class="doc-section"><h2>'+escapeHtml(t)+'</h2><div class="markdown-body">'+renderMarkdownToHtml(b)+'</div></section>';}
-    function notice(t,b){return '<section class="doc-section"><h2>'+escapeHtml(t)+'</h2><p style="font-size:12px;color:#52525b;background:#fafafa;border:1px solid #e4e4e7;padding:10px 12px;border-radius:6px">'+escapeHtml(b)+'</p></section>';}
     var htm='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reporte '+escapeHtml(exp.codigo||codigo)+'</title>';
     htm+='<style>body{font-family:Arial,sans-serif;padding:32px;color:#18181b;margin:0;font-size:13px;line-height:1.55}';
     htm+='.h{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;padding:22px 28px;border-radius:12px;margin-bottom:18px}';
@@ -1513,17 +1511,10 @@ window.exportarExpediente = function(codigo, btnEl) {
     htm+=row('Estado',exp.estado)+row('Progreso',(exp.progreso||0)+'%');
     htm+=row('Última actualización',exp.ultima_interaccion);
     htm+='</table>';
-    var printedEntregables = 0;
     orderedEntKeys.forEach(function(key){
-      if (ent[key]) {
-        printedEntregables += 1;
-        htm += sec(entregableLabel(key), ent[key]);
-      }
+      if (ent[key]) htm += sec(entregableLabel(key), ent[key]);
     });
-    if (!printedEntregables) {
-      htm += notice('Entregables', 'No se recibieron entregables disponibles para este expediente desde el servidor.');
-    }
-    htm+=renderQuestionAnswerAppendix(resp, exp, serverWarning);
+    htm+=renderQuestionAnswerAppendix(resp, exp);
     htm+='<footer>Generado por LM Smart Solutions</footer>';
     htm+='</body></html>';
     var blob=new Blob([htm],{type:'text/html;charset=utf-8'});
