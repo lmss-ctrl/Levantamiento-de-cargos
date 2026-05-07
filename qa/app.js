@@ -1360,7 +1360,8 @@ function isMarkdownTableSeparator(line) {
 
 function renderMarkdownTable(lines, start) {
   var header = splitMarkdownTableRow(lines[start]);
-  var html = '<div class="md-table-wrap"><table class="md-table"><thead><tr>';
+  var wideClass = header.length > 5 ? ' wide-table' : '';
+  var html = '<div class="md-table-wrap"><table class="md-table' + wideClass + '"><thead><tr>';
   header.forEach(function(cell){ html += '<th>' + renderInlineMarkdown(cell) + '</th>'; });
   html += '</tr></thead><tbody>';
   var i = start + 2;
@@ -1465,6 +1466,7 @@ window.exportarExpediente = function(codigo, btnEl) {
   .then(function(d){
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
     var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{}),resp=d.respuestas||[];
+    var fuenteQa=d.fuente_entregable_qa||{};
     var validation = validateExpedientePrintPayload(exp, ent, resp);
     if (!validation.ok) { alert(validation.message); return; }
     var orderedEntKeys = PDF_SECTION_ORDER;
@@ -1472,10 +1474,11 @@ window.exportarExpediente = function(codigo, btnEl) {
     function row(l,v){if(!v&&v!==0)return '';return '<tr><td style="font-weight:600;color:#52525b;width:220px;padding:6px 12px;vertical-align:top">'+escapeHtml(l)+'</td><td style="padding:6px 12px;white-space:pre-wrap">'+escapeHtml(v)+'</td></tr>';}
     function sec(t,b,key){if(!b)return '';var end={'analisis_carga_tiempos':'Fin del análisis de carga y tiempos','contraste_mejores_practicas':'Fin del contraste con mejores prácticas'}[key];return '<section class="doc-section"><h2>'+escapeHtml(t)+'</h2><div class="markdown-body">'+renderMarkdownToHtml(b)+'</div>'+(end?'<p class="section-end">'+escapeHtml(end)+'</p>':'')+'</section>';}
     var htm='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reporte '+escapeHtml(exp.codigo||codigo)+'</title>';
-    htm+='<style>@page{size:A4;margin:14mm 12mm}html{background:#f4f4f5}*{box-sizing:border-box}body{font-family:"Segoe UI",Arial,sans-serif;max-width:860px;margin:0 auto;background:#fff;padding:30px 34px;color:#18181b;font-size:12.7px;line-height:1.56;text-rendering:geometricPrecision}';
+    htm+='<style>@page{size:A4;margin:14mm 12mm}html{background:#fff}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;max-width:860px;margin:0 auto;background:#fff;padding:30px 34px;color:#18181b;font-size:12.7px;line-height:1.56}';
     htm+='.print-toolbar{position:sticky;top:0;z-index:5;margin:-30px -34px 18px;padding:10px 16px;background:#fff;border-bottom:1px solid #e4e4e7;display:flex;justify-content:space-between;align-items:center;color:#52525b;font-size:12px}.print-toolbar button{background:#27272a;color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer}';
-    htm+='.h{background:linear-gradient(135deg,#6d28d9,#be185d);color:#fff;padding:20px 24px;border-radius:10px;margin-bottom:18px}';
+    htm+='.h{background:#6d28d9;color:#fff;padding:20px 24px;border-radius:10px;margin-bottom:18px}';
     htm+='.h h1{font-size:20px;font-weight:700;margin:0 0 4px}.h p{margin:0;opacity:.85;font-size:13px}';
+    htm+='.source-note{font-size:11.5px;color:#71717a;background:#fafafa;border:1px solid #e4e4e7;border-radius:6px;padding:7px 9px;margin:-8px 0 14px}';
     htm+='table{width:100%;border-collapse:collapse;font-size:12.2px}';
     htm+='td{border-bottom:1px solid #eeeef2}tr:nth-child(even) td{background:#fbfbfd}';
     htm+='h2{font-size:15px;font-weight:750;color:#27272a;margin:0 0 10px;border-bottom:1.5px solid #ddd6fe;padding-bottom:6px}';
@@ -1485,16 +1488,18 @@ window.exportarExpediente = function(codigo, btnEl) {
     htm+='.markdown-body .md-heading-1{font-size:15px}.markdown-body .md-heading-2{font-size:14px}.markdown-body .md-heading-3,.markdown-body .md-heading-4{font-size:13px}';
     htm+='.md-p{margin:0 0 8px}.md-list{margin:0 0 10px 18px;padding:0}.md-list li{margin:3px 0}.md-hr{border:0;border-top:1px solid #e4e4e7;margin:12px 0}';
     htm+='.md-table-wrap{max-width:100%;overflow:visible;margin:8px 0 12px;break-inside:auto;page-break-inside:auto}';
-    htm+='.md-table{table-layout:auto;border:1px solid #e4e4e7;font-size:10.2px;line-height:1.32}';
-    htm+='.md-table th{background:#f4f4f5;color:#3f3f46;text-align:left;font-weight:700;border:1px solid #e4e4e7;padding:5px;vertical-align:top;overflow-wrap:anywhere}';
-    htm+='.md-table td{border:1px solid #e4e4e7;padding:5px;vertical-align:top;overflow-wrap:anywhere;background:#fff}';
+    htm+='.md-table{table-layout:auto;border:1px solid #e4e4e7;font-size:10.7px;line-height:1.38}';
+    htm+='.md-table.wide-table{font-size:10px;line-height:1.34}';
+    htm+='.md-table th{background:#f4f4f5;color:#3f3f46;text-align:left;font-weight:700;border:1px solid #e4e4e7;padding:6px;vertical-align:top;overflow-wrap:break-word;word-break:normal;hyphens:auto}';
+    htm+='.md-table td{border:1px solid #e4e4e7;padding:6px;vertical-align:top;overflow-wrap:break-word;word-break:normal;hyphens:auto;background:#fff}';
     htm+='.md-table tr:nth-child(even) td{background:#fafafa}strong{font-weight:700}code{font-family:Consolas,monospace;background:#f4f4f5;border-radius:3px;padding:1px 3px}';
     htm+='.section-end{font-size:11.5px;color:#71717a;font-style:italic;margin:12px 0 0;border-top:1px solid #e4e4e7;padding-top:6px}.appendix-section{margin-top:28px;border-top:2px solid #ede9fe;padding-top:14px}';
     htm+='footer{margin-top:28px;font-size:11px;color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}';
-    htm+='@media print{html,body{background:#fff}.print-toolbar{display:none!important}.h{-webkit-print-color-adjust:exact;print-color-adjust:exact}body{max-width:none;margin:0;padding:0}.doc-section{break-inside:auto;page-break-inside:auto}.appendix-section{break-before:auto;page-break-before:auto}.markdown-body .md-heading,h2{break-after:avoid;page-break-after:avoid}.md-table-wrap{break-inside:auto;page-break-inside:auto}.md-table{page-break-inside:auto}.md-table thead{display:table-header-group}.md-table tfoot{display:table-footer-group}.md-table tr{break-inside:avoid;page-break-inside:avoid}}';
+    htm+='@media print{html,body{background:#fff}.print-toolbar{display:none!important}.h{background:#6d28d9!important;color:#fff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.source-note{background:#fff!important}.md-table th{background:#f4f4f5!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}body{max-width:none;margin:0;padding:0}.doc-section{break-inside:auto;page-break-inside:auto}.appendix-section{break-before:auto;page-break-before:auto}.markdown-body .md-heading,h2{break-after:avoid;page-break-after:avoid}.md-table-wrap{break-inside:auto;page-break-inside:auto}.md-table{page-break-inside:auto}.md-table thead{display:table-header-group}.md-table tfoot{display:table-footer-group}.md-table tr{break-inside:avoid;page-break-inside:avoid}}';
     htm+='</style></head><body>';
-    htm+='<div class="print-toolbar"><span>Vista imprimible con texto seleccionable. Usa el boton para guardar como PDF.</span><button onclick="window.print()">Guardar como PDF</button></div>';
+    htm+='<div class="print-toolbar"><span>Vista imprimible con texto seleccionable. En Chrome/Edge usa destino "Guardar como PDF"; evita "Microsoft Print to PDF" si necesitas copiar o extraer texto.</span><button onclick="window.print()">Guardar como PDF</button></div>';
     htm+='<div class="h"><h1>Levantamiento de Cargo</h1><p>'+escapeHtml(exp.cargo||'-')+' &middot; '+escapeHtml(exp.codigo||codigo)+' &middot; '+escapeHtml(now)+'</p></div>';
+    if (fuenteQa && (fuenteQa.version || fuenteQa.page_id)) htm+='<div class="source-note">Fuente QA exportada: '+escapeHtml(fuenteQa.version||'sin version')+(fuenteQa.last_edited_time?' &middot; '+escapeHtml(fuenteQa.last_edited_time):'')+(fuenteQa.score_secciones_gerenciales!=null?' &middot; score secciones '+escapeHtml(fuenteQa.score_secciones_gerenciales):'')+'</div>';
     htm+='<h2>Datos del Colaborador</h2><table>';
     htm+=row('Nombre',exp.nombre)+row('Cargo',exp.cargo)+row('Área',exp.area);
     htm+=row('Jefe inmediato',exp.jefe_inmediato)+row('Ubicación',exp.ubicacion);
