@@ -1193,6 +1193,43 @@ function normalizeEntregablesForExport(entregables) {
   return ent;
 }
 
+var PDF_SECTION_ORDER = [
+  "perfil_seleccion",
+  "manual_cargo",
+  "kpis_sugeridos",
+  "hallazgos_optimizacion",
+  "recomendaciones_finales",
+  "matriz_funciones_responsabilidades",
+  "raci_basico",
+  "analisis_carga_tiempos",
+  "contraste_mejores_practicas"
+];
+
+function validateExpedientePrintPayload(exp, ent, resp) {
+  var missing = PDF_SECTION_ORDER.filter(function(key) {
+    return !String(ent[key] || "").trim();
+  });
+  if (missing.length) {
+    return { ok: false, message: "No se puede exportar PDF final. Faltan secciones: " + missing.map(entregableLabel).join(", ") };
+  }
+  var respuestas = normalizeResponseItems(resp);
+  if (!respuestas.length) {
+    return { ok: false, message: "No se puede exportar PDF final. Falta el anexo de preguntas y respuestas." };
+  }
+  var visibleValues = [];
+  Object.keys(exp || {}).forEach(function(key) {
+    if (exp[key] || exp[key] === 0 || exp[key] === false) visibleValues.push(exp[key]);
+  });
+  PDF_SECTION_ORDER.forEach(function(key) { visibleValues.push(ent[key] || ""); });
+  var hasBadLiteral = visibleValues.some(function(value) {
+    return /\b(undefined|null|NaN|\[object Object\])\b/i.test(String(value || ""));
+  });
+  if (hasBadLiteral) {
+    return { ok: false, message: "No se puede exportar PDF final. Hay valores técnicos sin resolver en el contenido." };
+  }
+  return { ok: true, respuestas: respuestas };
+}
+
 function collectExportRows(data) {
   var rows = [];
   var exp = data.expediente || {};
@@ -1270,8 +1307,8 @@ function normalizeResponseItems(resp) {
 function renderQuestionAnswerAppendix(resp) {
   var respuestas = normalizeResponseItems(resp);
   if (!respuestas.length) return "";
-  var html = '<div style="break-before:page;page-break-before:always;margin-top:24px">';
-  html += '<h2 style="font-size:16px;font-weight:700;color:#27272a;margin:0 0 10px">Anexo: preguntas y respuestas</h2>';
+  var html = '<section class="doc-section appendix-section">';
+  html += '<h2>Anexo — Preguntas y respuestas del levantamiento</h2>';
   respuestas.forEach(function(item) {
     html += '<div style="border-bottom:1px solid #ececf0;padding:10px 0;break-inside:avoid;page-break-inside:avoid">';
     html += '<div style="font-size:12px;font-weight:700;color:#7c3aed;margin-bottom:4px">' + escapeHtml(item.id_pregunta) + '</div>';
@@ -1279,7 +1316,8 @@ function renderQuestionAnswerAppendix(resp) {
     html += '<div style="font-size:12.5px;color:#52525b;line-height:1.65;white-space:pre-wrap">' + escapeHtml(item.respuesta || "Sin respuesta registrada") + '</div>';
     html += '</div>';
   });
-  html += '</div>';
+  html += '<p class="section-end">Fin del anexo de preguntas y respuestas</p>';
+  html += '</section>';
   return html;
 }
 
@@ -1427,20 +1465,12 @@ window.exportarExpediente = function(codigo, btnEl) {
   .then(function(d){
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
     var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{}),resp=d.respuestas||[];
-    var orderedEntKeys = [
-      "perfil_seleccion",
-      "manual_cargo",
-      "kpis_sugeridos",
-      "hallazgos_optimizacion",
-      "recomendaciones_finales",
-      "matriz_funciones_responsabilidades",
-      "raci_basico",
-      "analisis_carga_tiempos",
-      "contraste_mejores_practicas"
-    ];
+    var validation = validateExpedientePrintPayload(exp, ent, resp);
+    if (!validation.ok) { alert(validation.message); return; }
+    var orderedEntKeys = PDF_SECTION_ORDER;
     var now=new Date().toLocaleDateString('es-CO',{year:'numeric',month:'long',day:'numeric'});
     function row(l,v){if(!v&&v!==0)return '';return '<tr><td style="font-weight:600;color:#52525b;width:220px;padding:6px 12px;vertical-align:top">'+escapeHtml(l)+'</td><td style="padding:6px 12px;white-space:pre-wrap">'+escapeHtml(v)+'</td></tr>';}
-    function sec(t,b){if(!b)return '';return '<section class="doc-section"><h2>'+escapeHtml(t)+'</h2><div class="markdown-body">'+renderMarkdownToHtml(b)+'</div></section>';}
+    function sec(t,b,key){if(!b)return '';var end={'analisis_carga_tiempos':'Fin del análisis de carga y tiempos','contraste_mejores_practicas':'Fin del contraste con mejores prácticas'}[key];return '<section class="doc-section"><h2>'+escapeHtml(t)+'</h2><div class="markdown-body">'+renderMarkdownToHtml(b)+'</div>'+(end?'<p class="section-end">'+escapeHtml(end)+'</p>':'')+'</section>';}
     var htm='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reporte '+escapeHtml(exp.codigo||codigo)+'</title>';
     htm+='<style>@page{size:A4;margin:14mm 12mm}html{background:#f4f4f5}*{box-sizing:border-box}body{font-family:"Segoe UI",Arial,sans-serif;max-width:860px;margin:0 auto;background:#fff;padding:30px 34px;color:#18181b;font-size:12.7px;line-height:1.56;text-rendering:geometricPrecision}';
     htm+='.print-toolbar{position:sticky;top:0;z-index:5;margin:-30px -34px 18px;padding:10px 16px;background:#fff;border-bottom:1px solid #e4e4e7;display:flex;justify-content:space-between;align-items:center;color:#52525b;font-size:12px}.print-toolbar button{background:#27272a;color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer}';
@@ -1459,8 +1489,9 @@ window.exportarExpediente = function(codigo, btnEl) {
     htm+='.md-table th{background:#f4f4f5;color:#3f3f46;text-align:left;font-weight:700;border:1px solid #e4e4e7;padding:5px;vertical-align:top;overflow-wrap:anywhere}';
     htm+='.md-table td{border:1px solid #e4e4e7;padding:5px;vertical-align:top;overflow-wrap:anywhere;background:#fff}';
     htm+='.md-table tr:nth-child(even) td{background:#fafafa}strong{font-weight:700}code{font-family:Consolas,monospace;background:#f4f4f5;border-radius:3px;padding:1px 3px}';
+    htm+='.section-end{font-size:11.5px;color:#71717a;font-style:italic;margin:12px 0 0;border-top:1px solid #e4e4e7;padding-top:6px}.appendix-section{margin-top:28px;border-top:2px solid #ede9fe;padding-top:14px}';
     htm+='footer{margin-top:28px;font-size:11px;color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}';
-    htm+='@media print{html,body{background:#fff}.print-toolbar{display:none!important}.h{-webkit-print-color-adjust:exact;print-color-adjust:exact}body{max-width:none;margin:0;padding:0}.doc-section{break-inside:auto;page-break-inside:auto}.markdown-body .md-heading{break-after:avoid;page-break-after:avoid}.md-table-wrap{break-inside:auto;page-break-inside:auto}.md-table{page-break-inside:auto}.md-table tr{break-inside:avoid;page-break-inside:avoid}}';
+    htm+='@media print{html,body{background:#fff}.print-toolbar{display:none!important}.h{-webkit-print-color-adjust:exact;print-color-adjust:exact}body{max-width:none;margin:0;padding:0}.doc-section{break-inside:auto;page-break-inside:auto}.appendix-section{break-before:auto;page-break-before:auto}.markdown-body .md-heading,h2{break-after:avoid;page-break-after:avoid}.md-table-wrap{break-inside:auto;page-break-inside:auto}.md-table{page-break-inside:auto}.md-table thead{display:table-header-group}.md-table tfoot{display:table-footer-group}.md-table tr{break-inside:avoid;page-break-inside:avoid}}';
     htm+='</style></head><body>';
     htm+='<div class="print-toolbar"><span>Vista imprimible con texto seleccionable. Usa el boton para guardar como PDF.</span><button onclick="window.print()">Guardar como PDF</button></div>';
     htm+='<div class="h"><h1>Levantamiento de Cargo</h1><p>'+escapeHtml(exp.cargo||'-')+' &middot; '+escapeHtml(exp.codigo||codigo)+' &middot; '+escapeHtml(now)+'</p></div>';
@@ -1473,7 +1504,7 @@ window.exportarExpediente = function(codigo, btnEl) {
     htm+=row('Última actualización',exp.ultima_interaccion);
     htm+='</table>';
     orderedEntKeys.forEach(function(key){
-      if (ent[key]) htm += sec(entregableLabel(key), ent[key]);
+      if (ent[key]) htm += sec(entregableLabel(key), ent[key], key);
     });
     htm+=renderQuestionAnswerAppendix(resp);
     htm+='<footer>Generado por LM Smart Solutions</footer>';
