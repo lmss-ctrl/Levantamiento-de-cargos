@@ -306,10 +306,27 @@
    "Fin del análisis de carga y tiempos" and "Fin del contraste con mejores prácticas".
    The real appendix closure is not italic-only and remains visible. */
 @media screen, print {
-  p:has(> em:only-child) {
+  p:has(> em:only-child),
+  p:has(> i:only-child),
+  p.italic,
+  .italic,
+  p[style*="italic"],
+  div[style*="italic"] {
     display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
   }
-  p > em:only-child {
+  p > em:only-child,
+  p > i:only-child,
+  em:only-child,
+  i:only-child {
     display: none !important;
+    visibility: hidden !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    color: transparent !important;
   }
 }
