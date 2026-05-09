@@ -309,4 +309,7 @@
   p:has(> em:only-child) {
     display: none !important;
   }
+  p > em:only-child {
+    display: none !important;
+  }
 }
