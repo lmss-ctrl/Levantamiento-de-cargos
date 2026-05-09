@@ -1567,10 +1567,6 @@ window.exportarExpediente = function(codigo, btnEl) {
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
     var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{}),resp=d.respuestas||[];
     var fuenteQa=d.fuente_entregable_qa||{};
-    console.log("[exportarExpediente] codigo", codigo);
-    console.log("[exportarExpediente] keys entregables raw", Object.keys(d.entregables || {}));
-    console.log("[exportarExpediente] keys entregables normalizados", Object.keys(ent || {}));
-    console.log("[exportarExpediente] fuente QA", d.fuente_entregable_qa || null);
     var validation = validateExpedientePrintPayload(exp, ent, resp);
     if (!validation.ok) { alert(validation.message); return; }
     var orderedEntKeys = PDF_SECTION_ORDER;
