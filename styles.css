@@ -311,16 +311,26 @@
   p.italic,
   .italic,
   p[style*="italic"],
-  div[style*="italic"] {
+  div[style*="italic"],
+  span[style*="italic"],
+  span[style*="font-style"],
+  [style*="font-style: italic"],
+  [style*="font-style:italic"],
+  [class*="italic"] {
     display: none !important;
     visibility: hidden !important;
     height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
     overflow: hidden !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    color: transparent !important;
   }
   p > em:only-child,
   p > i:only-child,
+  span > em:only-child,
+  span > i:only-child,
   em:only-child,
   i:only-child {
     display: none !important;
