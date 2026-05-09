@@ -1162,6 +1162,14 @@ function normalizeUtf8Text(value) {
   return String(value == null ? "" : value).normalize("NFC");
 }
 
+function limpiarTextoExportable(texto) {
+  return String(texto || "")
+    .replace(/<[a-z][a-z0-9]*[^>]*>\s*Fin del an[aá]lisis de carga y tiempos\s*<\/[a-z][a-z0-9]*>/gi, "")
+    .replace(/<[a-z][a-z0-9]*[^>]*>\s*Fin del contraste con mejores pr[aá]cticas\s*<\/[a-z][a-z0-9]*>/gi, "")
+    .replace(/^\s*Fin del an[aá]lisis de carga y tiempos\s*$/gmi, "")
+    .replace(/^\s*Fin del contraste con mejores pr[aá]cticas\s*$/gmi, "");
+}
+
 function csvEscape(value) {
   var s = normalizeUtf8Text(value);
   if (/[";\r\n]/.test(s)) {
@@ -1564,7 +1572,7 @@ window.exportarExpediente = function(codigo, btnEl) {
     var orderedEntKeys = PDF_SECTION_ORDER;
     var now=new Date().toLocaleDateString('es-CO',{year:'numeric',month:'long',day:'numeric'});
     function row(l,v){if(!v&&v!==0)return '';return '<tr><td style="font-weight:600;color:#52525b;width:220px;padding:6px 12px;vertical-align:top">'+escapeHtml(l)+'</td><td style="padding:6px 12px;white-space:pre-wrap">'+escapeHtml(v)+'</td></tr>';}
-    function sec(t,b,key){if(!b)return '';var end={'analisis_carga_tiempos':'Fin del análisis de carga y tiempos','contraste_mejores_practicas':'Fin del contraste con mejores prácticas'}[key];return '<section class="doc-section"><h2>'+escapeHtml(t)+'</h2><div class="markdown-body">'+renderMarkdownToHtml(b)+'</div>'+(end?'<p class="section-end">'+escapeHtml(end)+'</p>':'')+'</section>';}
+    function sec(t,b,key){if(!b)return '';return '<section class="doc-section"><h2>'+escapeHtml(t)+'</h2><div class="markdown-body">'+renderMarkdownToHtml(limpiarTextoExportable(b))+'</div></section>';}
     var htm='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reporte '+escapeHtml(exp.codigo||codigo)+'</title>';
     htm+='<style>@page{size:A4;margin:14mm 12mm}html{background:#fff}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;max-width:860px;margin:0 auto;background:#fff;padding:30px 34px;color:#18181b;font-size:12.7px;line-height:1.56}';
     htm+='.print-toolbar{position:sticky;top:0;z-index:5;margin:-30px -34px 18px;padding:10px 16px;background:#fff;border-bottom:1px solid #e4e4e7;display:flex;justify-content:space-between;gap:12px;align-items:center;color:#52525b;font-size:12px}.print-toolbar-actions{display:flex;gap:10px;align-items:center;white-space:nowrap}.print-toolbar label{display:flex;gap:5px;align-items:center}.print-toolbar button{background:#27272a;color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer}';
@@ -1607,6 +1615,7 @@ window.exportarExpediente = function(codigo, btnEl) {
     htm+='<footer>Generado por LM Smart Solutions</footer>';
     htm+='<script>function downloadTextHtml(){var clone=document.documentElement.cloneNode(true);var toolbar=clone.querySelector(".print-toolbar");if(toolbar)toolbar.remove();if(!document.body.classList.contains("print-source")){var source=clone.querySelector(".source-note");if(source)source.remove();}var script=clone.querySelector("script");if(script)script.remove();var html="<!DOCTYPE html>\\n"+clone.outerHTML;var blob=new Blob([html],{type:"text/html;charset=utf-8"});var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="expediente_'+escapeHtml(String(exp.codigo||codigo)).replace(/[^a-zA-Z0-9_-]+/g,"_")+'_texto.html";document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);}</script>';
     htm+='</body></html>';
+    htm = limpiarTextoExportable(htm);
     var blob=new Blob([htm],{type:'text/html;charset=utf-8'});
     var url=URL.createObjectURL(blob);
     var w=window.open(url,'_blank');
