@@ -360,6 +360,42 @@ function ensureAdminToken() {
   return false;
 }
 
+// ── Normalizar código de expediente (EXP-...) desde cualquier fuente ──────────
+function normalizarCodigo(exp) {
+  if (!exp) return "";
+  var raw = "";
+  if (typeof exp === "string") {
+    raw = exp;
+  } else if (typeof exp === "object") {
+    raw = exp.codigo || exp.codigo_expediente || exp.codigoExpediente
+       || exp["Código expediente"] || exp["Código expediente  (Auto)"]
+       || exp["Codigo expediente"]  || exp["Codigo expediente  (Auto)"] || "";
+  }
+  var str = String(raw || "").trim();
+  var match = str.match(/EXP-\d+/i);
+  return match ? match[0].toUpperCase() : str;
+}
+
+// ── Limpiar token de sesión expirada ─────────────────────────────────────────
+function handleSesionExpirada() {
+  appState.tokenSesion = "";
+  for (var _s of getStorageTargets()) {
+    try { _s.removeItem(SESSION_KEY); } catch(e) {}
+  }
+}
+
+// ── Detectar si una respuesta ok:false indica sesión expirada ────────────────
+function esSesionExpirada(data) {
+  var msg = String((data && (data.mensaje || data.message)) || "").toLowerCase();
+  return !data.ok && (
+    msg.includes("sesion expiro") ||
+    msg.includes("sesión expiró") ||
+    msg.includes("sesion invalida") ||
+    msg.includes("token") ||
+    msg.includes("no autorizado")
+  );
+}
+
 function saveDraft() {
   try {
     const answerEl = document.getElementById("txtRespuesta");
@@ -1204,34 +1240,64 @@ function sleep(ms) {
 }
 
 window.generarEntregableExpediente = async function(codigo, btnEl) {
+  var codigoOriginal = normalizarCodigo(codigo || "");
   var btn = btnEl || null;
   var orig = btn ? btn.innerHTML : "";
   if (!ensureAdminToken()) {
-    alert("La sesion administrativa no esta disponible. Inicia sesion nuevamente.");
+    alert("La sesión administrativa no está disponible. Inicia sesión nuevamente.");
     return;
   }
-  if (!codigo) {
-    alert("No se encontro codigo de expediente para generar entregables.");
+  if (!codigoOriginal || !codigoOriginal.startsWith("EXP-")) {
+    alert("No se encontró código de expediente válido para generar entregables: " + (codigo || "(vacío)"));
     return;
   }
   if (btn) { btn.innerHTML = "..."; btn.disabled = true; }
   try {
     var res = await postJson(WEBHOOK_ENTREGABLES, {
-      codigo_expediente: codigo,
+      codigo_expediente: codigoOriginal,
       database_id_entregables_qa: DATABASE_ID_ENTREGABLES_QA
     }, 0);
     if (!res || !res.ok) {
       throw new Error(res && (res.error_qa || res.mensaje || res.estado_generacion_qa) || "sin detalle");
     }
-    var fresh = await fetchExpedienteCompletoForExport(codigo, "refetch_post_generate", 4);
+    var fresh = await fetchExpedienteCompletoForExport(codigoOriginal, "refetch_post_generate", 4);
+    // Sesión expirada post-generación
+    if (!fresh.ok && esSesionExpirada(fresh)) {
+      handleSesionExpirada();
+      alert("La sesión de administrador expiró. Inicia sesión nuevamente.");
+      return;
+    }
+    // Mismatch post-generación
+    var codigoRecibido = normalizarCodigo(fresh.expediente || {});
+    if (fresh.ok && codigoRecibido && codigoRecibido !== codigoOriginal) {
+      console.error("[ADMIN PDF] Mismatch post-generate", {
+        accion: "generarEntregableExpediente",
+        codigoSolicitado: codigoOriginal,
+        codigoRecibido: codigoRecibido,
+        tokenPresente: !!appState.tokenSesion
+      });
+      alert("Error de sincronización: el backend devolvió un expediente diferente al solicitado.");
+      return;
+    }
     appState.expedientesCompletosCache = appState.expedientesCompletosCache || {};
-    appState.expedientesCompletosCache[codigo] = fresh;
+    appState.expedientesCompletosCache[codigoOriginal] = fresh;
     var ent = normalizeEntregablesForExport(fresh.entregables || {}, fresh);
-    logPdfExportDiagnostics(codigo, "refetch_post_generate", fresh, ent, null, null);
-    alert("Entregables generados para " + codigo + ".");
+    console.log("[ADMIN PDF]", {
+      accion: "generarEntregableExpediente",
+      codigoVisibleFila: codigo,
+      codigoSolicitado: codigoOriginal,
+      codigoRecibido: codigoRecibido || codigoOriginal,
+      tokenPresente: !!appState.tokenSesion,
+      okBackend: fresh.ok,
+      mensajeBackend: fresh.mensaje,
+      longitudesEntregables: (function(){ var l={}; PDF_SECTION_ORDER.forEach(function(k){ l[k]=String(ent[k]||"").length; }); return l; })(),
+      fuenteDatos: "get_expediente_completo"
+    });
+    logPdfExportDiagnostics(codigoOriginal, "refetch_post_generate", fresh, ent, null, null);
+    alert("Entregables generados para " + codigoOriginal + ".");
     await loadExpedientes();
   } catch (e) {
-    alert("No se pudieron generar entregables para " + codigo + ": " + e.message);
+    alert("No se pudieron generar entregables para " + codigoOriginal + ": " + e.message);
   } finally {
     if (btn) { btn.innerHTML = orig; btn.disabled = false; }
   }
@@ -1241,7 +1307,7 @@ window.generarEntregablesFinalizados = async function(btnEl) {
   var btn = btnEl || null;
   var orig = btn ? btn.innerHTML : "";
   if (!ensureAdminToken()) {
-    alert("La sesiÃ³n administrativa no estÃ¡ disponible. Inicia sesiÃ³n nuevamente.");
+    alert("La sesión administrativa no está disponible. Inicia sesión nuevamente.");
     return;
   }
   var expedientes = Array.isArray(appState.expedientesAdmin) && appState.expedientesAdmin.length
@@ -1249,49 +1315,70 @@ window.generarEntregablesFinalizados = async function(btnEl) {
     : [];
   if (!expedientes.length) {
     var data = await postJson(WEBHOOK_ADMIN, {accion:"listar_expedientes"});
+    if (!data.ok && esSesionExpirada(data)) {
+      handleSesionExpirada();
+      alert("La sesión de administrador expiró. Inicia sesión nuevamente.");
+      return;
+    }
     expedientes = data.expedientes || [];
     appState.expedientesAdmin = expedientes;
   }
-  var finalizados = expedientes.filter(function(exp) {
-    return String(exp.estado || "").toLowerCase() === "cerrado" && exp.codigo;
-  });
-  if (!finalizados.length) {
+  // Snapshot inmutable antes de iterar — evita mezcla si la tabla se refresca durante el loop
+  var pendientes = expedientes
+    .filter(function(exp) {
+      return String(exp.estado || "").toLowerCase() === "cerrado" && normalizarCodigo(exp);
+    })
+    .map(function(exp) {
+      return {
+        codigo: normalizarCodigo(exp),
+        nombre: String(exp.nombre || ""),
+        cargo:  String(exp.cargo  || "")
+      };
+    });
+  if (!pendientes.length) {
     alert("No hay expedientes cerrados para generar.");
     return;
   }
-  if (!confirm("Se generaran entregables 1x1 para " + finalizados.length + " expedientes cerrados, con pausa entre cada caso para proteger Notion. Este proceso puede tardar varios minutos. Continuar?")) {
+  if (!confirm("Se generarán entregables 1x1 para " + pendientes.length + " expedientes cerrados, con pausa entre cada caso para proteger Notion. Este proceso puede tardar varios minutos. ¿Continuar?")) {
     return;
   }
-  if (btn) { btn.innerHTML = "Generando 0/" + finalizados.length; btn.disabled = true; }
+  if (btn) { btn.innerHTML = "Generando 0/" + pendientes.length; btn.disabled = true; }
   var ok = 0, fail = 0;
   var errores = [];
-  for (var i = 0; i < finalizados.length; i++) {
-    var exp = finalizados[i];
-    if (btn) btn.innerHTML = "Generando " + (i + 1) + "/" + finalizados.length;
+  for (var i = 0; i < pendientes.length; i++) {
+    var pendiente = pendientes[i];  // código inmutable, no depende del array original
+    if (btn) btn.innerHTML = "Generando " + (i + 1) + "/" + pendientes.length;
     try {
       var res = await postJson(WEBHOOK_ENTREGABLES, {
-        codigo_expediente: exp.codigo,
+        codigo_expediente: pendiente.codigo,
         database_id_entregables_qa: DATABASE_ID_ENTREGABLES_QA
       }, 0);
       if (res && res.ok) ok++;
       else {
+        // Sesión expirada durante el loop
+        if (res && !res.ok && esSesionExpirada(res)) {
+          handleSesionExpirada();
+          fail++;
+          errores.push(pendiente.codigo + ": sesión expirada, proceso detenido");
+          break;
+        }
         fail++;
-        errores.push(exp.codigo + ": " + (res && (res.error_qa || res.mensaje || res.estado_generacion_qa) || "sin detalle"));
+        errores.push(pendiente.codigo + ": " + (res && (res.error_qa || res.mensaje || res.estado_generacion_qa) || "sin detalle"));
       }
       if (res && res.ok) {
-        var fresh = await fetchExpedienteCompletoForExport(exp.codigo, "refetch_post_batch_generate", 3);
+        var fresh = await fetchExpedienteCompletoForExport(pendiente.codigo, "refetch_post_batch_generate", 3);
         appState.expedientesCompletosCache = appState.expedientesCompletosCache || {};
-        appState.expedientesCompletosCache[exp.codigo] = fresh;
+        appState.expedientesCompletosCache[pendiente.codigo] = fresh;
       }
     } catch (e) {
       fail++;
-      errores.push(exp.codigo + ": " + e.message);
+      errores.push(pendiente.codigo + ": " + e.message);
     }
     await sleep(5000);
   }
   if (btn) { btn.innerHTML = orig; btn.disabled = false; }
   await loadExpedientes();
-  var msg = "GeneraciÃ³n finalizada. OK: " + ok + ". Con error: " + fail + ".";
+  var msg = "Generación finalizada. OK: " + ok + ". Con error: " + fail + ".";
   if (errores.length) msg += "\n\nPrimeros errores:\n" + errores.slice(0, 8).join("\n");
   alert(msg);
 };
@@ -1308,15 +1395,15 @@ function normalizeEntregablesForExport(entregables) {
   });
   var ent = Object.assign({}, entregables || {});
   var aliases = {
-    perfil_seleccion: ["perfil_de_seleccion", "perfil_seleccion", "Perfil de selección", "Perfil de Selección"],
-    manual_cargo: ["manual_de_cargo", "manual_cargo", "Manual de cargo", "Manual de Cargo"],
-    kpis_sugeridos: ["kpis_sugeridos", "indicadores", "KPIs sugeridos", "KPIs Sugeridos"],
-    hallazgos_optimizacion: ["hallazgos_optimizacion", "Hallazgos de optimización", "Hallazgos de Optimización"],
-    recomendaciones_finales: ["recomendaciones_finales", "Recomendaciones finales", "Recomendaciones Finales"],
-    matriz_funciones_responsabilidades: ["matriz_funciones_responsabilidades", "Matriz funciones y responsabilidades", "Matriz de Funciones y Responsabilidades"],
-    raci_basico: ["raci_basico", "RACI básico", "RACI Básico"],
-    analisis_carga_tiempos: ["analisis_carga_tiempos", "Análisis de carga y tiempos", "Analisis de carga y tiempos"],
-    contraste_mejores_practicas: ["contraste_mejores_practicas", "Contraste con mejores prácticas", "Contraste con Mejores Prácticas"]
+    perfil_seleccion: ["perfil_de_seleccion","perfil_seleccion","perfilSeleccion","Perfil de seleccion","Perfil de selección","Perfil de Seleccion","Perfil de Selección","Perfil Seleccion","Perfil selección"],
+    manual_cargo: ["manual_de_cargo","manual_cargo","manualCargo","Manual de cargo","Manual de Cargo","Descripcion del cargo","Descripción del cargo"],
+    kpis_sugeridos: ["kpis_sugeridos","indicadores","kpisSugeridos","KPIs sugeridos","KPIs Sugeridos","Indicadores de gestion","Indicadores de gestión"],
+    hallazgos_optimizacion: ["hallazgos_optimizacion","hallazgosOptimizacion","Hallazgos de optimizacion","Hallazgos de optimización","Hallazgos de Optimizacion","Hallazgos de Optimización","Hallazgos optimizacion"],
+    recomendaciones_finales: ["recomendaciones_finales","recomendacionesFinales","Recomendaciones finales","Recomendaciones Finales","Recomendaciones finales del cargo"],
+    matriz_funciones_responsabilidades: ["matriz_funciones_responsabilidades","matrizFuncionesResponsabilidades","Matriz funciones y responsabilidades","Matriz de funciones y responsabilidades","Matriz de Funciones y Responsabilidades"],
+    raci_basico: ["raci_basico","raciBasico","RACI basico","RACI básico","RACI Basico","RACI Básico"],
+    analisis_carga_tiempos: ["analisis_carga_tiempos","analisisCargaTiempos","Analisis de carga y tiempos","Análisis de carga y tiempos","Analisis carga tiempos"],
+    contraste_mejores_practicas: ["contraste_mejores_practicas","contrasteMejoresPracticas","Contraste con mejores practicas","Contraste con mejores prácticas","Contraste con Mejores Practicas","Contraste con Mejores Prácticas"]
   };
   function normKey(key) {
     return String(key || "")
@@ -1408,7 +1495,12 @@ function validateExpedientePrintPayload(exp, ent, resp) {
 function hasMeaningfulSectionContent(value) {
   var text = String(value || "")
     .replace(/<[^>]+>/g, " ")
-    .replace(/[#*_`|>\-–—=\s]/g, " ")
+    .replace(/^#+\s+.*/gm, " ")          // headings markdown
+    .replace(/[#*_`|>\-–—=]/g, " ")     // markdown symbols
+    .replace(/^\s*[-*+]\s+/gm, " ")      // list bullets
+    .replace(/\bplaceholder\b/gi, " ")   // literal "placeholder"
+    .replace(/\bempty\b/gi, " ")         // literal "empty"
+    .replace(/\bN\/A\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
   return text.length > 100;
@@ -1440,16 +1532,45 @@ function logPdfExportDiagnostics(codigo, source, data, ent, validation, blob) {
   if (validation && !validation.ok) console.warn("[PDF export] validacion", validation.message);
 }
 
-async function fetchExpedienteCompletoForExport(codigo, source, retries) {
+async function fetchExpedienteCompletoForExport(codigoSolicitado, source, retries) {
+  var codigoNorm = normalizarCodigo(codigoSolicitado);
   var lastData = null;
   for (var attempt = 0; attempt <= (retries || 0); attempt++) {
-    var data = await postJson(WEBHOOK_ADMIN, {accion:"get_expediente_completo", codigo_expediente:codigo, _ts:Date.now()});
+    var data = await postJson(WEBHOOK_ADMIN, {
+      accion: "get_expediente_completo",
+      codigo_expediente: codigoNorm || codigoSolicitado,
+      _ts: Date.now()
+    });
     lastData = data;
+
+    // Corto-circuito en ok:false — no reintentar errores de sesión o datos
+    if (!data.ok) {
+      return data;
+    }
+
+    // Detectar mismatch: backend devolvió un expediente diferente al solicitado
+    var codigoRecibido = normalizarCodigo(data.expediente || {});
+    if (codigoNorm && codigoRecibido && codigoRecibido !== codigoNorm) {
+      console.error("[ADMIN] fetchExpedienteCompletoForExport mismatch", {
+        codigoSolicitado: codigoNorm,
+        codigoRecibido: codigoRecibido,
+        fuente: source,
+        intento: attempt + 1
+      });
+      return {
+        ok: false,
+        _mismatch: true,
+        mensaje: "Error de sincronización: el backend devolvió un expediente diferente al solicitado.",
+        _debug: { codigoSolicitado: codigoNorm, codigoRecibido: codigoRecibido, source: source }
+      };
+    }
+
     var ent = normalizeEntregablesForExport(data.entregables || {}, data);
     var diagnostics = getExportSectionDiagnostics(ent);
     var presentCount = Object.keys(diagnostics).filter(function(key){ return diagnostics[key].present; }).length;
     console.info("[PDF export] refetch", {
-      codigo_expediente: codigo,
+      codigo_expediente: codigoNorm,
+      codigo_recibido: codigoRecibido,
       fuente_datos: source || "refetch",
       intento: attempt + 1,
       secciones_presentes: presentCount,
@@ -1691,24 +1812,74 @@ function entregableLabel(key) {
 }
 
 window.exportarExpediente = async function(codigo, btnEl) {
+  var codigoOriginal = normalizarCodigo(codigo || "");
   var btn = btnEl || null, orig = btn ? btn.innerHTML : "";
   if (!ensureAdminToken()) {
     alert("La sesión administrativa no está disponible. Inicia sesión nuevamente antes de exportar.");
     return;
   }
-  if (!codigo) {
-    alert("No se puede exportar PDF final. Falta codigo_expediente.");
+  if (!codigoOriginal || !codigoOriginal.startsWith("EXP-")) {
+    alert("No se puede exportar PDF final. Código de expediente inválido o vacío: " + (codigo || "(vacío)"));
     return;
   }
   if (btn) { btn.innerHTML = 'Procesando...'; btn.disabled = true; }
   try {
-    var d = await fetchExpedienteCompletoForExport(codigo, "refetch", 2);
-    if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
+    var d = await fetchExpedienteCompletoForExport(codigoOriginal, "refetch", 2);
+
+    // Sesión expirada — limpiar token y mostrar mensaje correcto
+    if (!d.ok && esSesionExpirada(d)) {
+      handleSesionExpirada();
+      alert("La sesión de administrador expiró. Inicia sesión nuevamente.");
+      return;
+    }
+
+    // Mismatch de sincronización — no intentar exportar
+    if (!d.ok && d._mismatch) {
+      console.error("[ADMIN PDF] Mismatch detectado por fetchExpedienteCompletoForExport", d._debug || {});
+      alert(d.mensaje || "Error de sincronización: el backend devolvió un expediente diferente al solicitado.");
+      return;
+    }
+
+    if (!d.ok) {
+      alert(d.mensaje || "Error al obtener expediente.");
+      return;
+    }
+
+    var codigoRecibido = normalizarCodigo(d.expediente || {});
+    // Validación explícita de coincidencia de código
+    if (codigoRecibido && codigoRecibido !== codigoOriginal) {
+      console.error("[ADMIN PDF] Mismatch post-fetch", {
+        accion: "exportarExpediente",
+        codigoVisibleFila: codigo,
+        codigoSolicitado: codigoOriginal,
+        codigoRecibido: codigoRecibido,
+        tokenPresente: !!appState.tokenSesion
+      });
+      alert("Error de sincronización: el backend devolvió un expediente diferente al solicitado.");
+      return;
+    }
+
     var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{}, d),resp=d.respuestas||[];
     var fuenteQa=d.fuente_entregable_qa||{};
+
+    // Log diagnóstico obligatorio
+    var _longitudes = {};
+    PDF_SECTION_ORDER.forEach(function(k){ _longitudes[k] = String(ent[k]||"").length; });
+    console.log("[ADMIN PDF]", {
+      accion: "exportarExpediente",
+      codigoVisibleFila: codigo,
+      codigoSolicitado: codigoOriginal,
+      codigoRecibido: codigoRecibido || codigoOriginal,
+      tokenPresente: !!appState.tokenSesion,
+      okBackend: d.ok,
+      mensajeBackend: d.mensaje,
+      longitudesEntregables: _longitudes,
+      fuenteDatos: "get_expediente_completo"
+    });
+
     var validation = validateExpedientePrintPayload(exp, ent, resp);
     if (!validation.ok) {
-      logPdfExportDiagnostics(codigo, d._export_source || "refetch", d, ent, validation, null);
+      logPdfExportDiagnostics(codigoOriginal, d._export_source || "refetch", d, ent, validation, null);
       alert(validation.message);
       return;
     }
@@ -1716,7 +1887,7 @@ window.exportarExpediente = async function(codigo, btnEl) {
     var now=new Date().toLocaleDateString('es-CO',{year:'numeric',month:'long',day:'numeric'});
     function row(l,v){if(!v&&v!==0)return '';return '<tr><td style="font-weight:600;color:#52525b;width:220px;padding:6px 12px;vertical-align:top">'+escapeHtml(l)+'</td><td style="padding:6px 12px;white-space:pre-wrap">'+escapeHtml(v)+'</td></tr>';}
     function sec(t,b,key){if(!b)return '';return '<section class="doc-section"><h2>'+escapeHtml(t)+'</h2><div class="markdown-body">'+renderMarkdownToHtml(limpiarTextoExportable(b))+'</div></section>';}
-    var htm='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reporte '+escapeHtml(exp.codigo||codigo)+'</title>';
+    var htm='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reporte '+escapeHtml(exp.codigo||codigoOriginal)+'</title>';
     htm+='<style>@page{size:A4;margin:14mm 12mm}html{background:#fff}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;max-width:860px;margin:0 auto;background:#fff;padding:30px 34px;color:#18181b;font-size:12.7px;line-height:1.56}';
     htm+='.print-toolbar{position:sticky;top:0;z-index:5;margin:-30px -34px 18px;padding:10px 16px;background:#fff;border-bottom:1px solid #e4e4e7;display:flex;justify-content:space-between;gap:12px;align-items:center;color:#52525b;font-size:12px}.print-toolbar-actions{display:flex;gap:10px;align-items:center;white-space:nowrap}.print-toolbar label{display:flex;gap:5px;align-items:center}.print-toolbar button{background:#27272a;color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer}';
     htm+='.h{background:#6d28d9;color:#fff;padding:20px 24px;border-radius:10px;margin-bottom:18px}';
@@ -1756,16 +1927,16 @@ window.exportarExpediente = async function(codigo, btnEl) {
     });
     htm+=renderQuestionAnswerAppendix(resp);
     htm+='<footer>Generado por LM Smart Solutions</footer>';
-    htm+='<script>function downloadTextHtml(){var clone=document.documentElement.cloneNode(true);var toolbar=clone.querySelector(".print-toolbar");if(toolbar)toolbar.remove();if(!document.body.classList.contains("print-source")){var source=clone.querySelector(".source-note");if(source)source.remove();}var script=clone.querySelector("script");if(script)script.remove();var html="<!DOCTYPE html>\\n"+clone.outerHTML;var blob=new Blob([html],{type:"text/html;charset=utf-8"});var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="expediente_'+escapeHtml(String(exp.codigo||codigo)).replace(/[^a-zA-Z0-9_-]+/g,"_")+'_texto.html";document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);}</script>';
+    htm+='<script>function downloadTextHtml(){var clone=document.documentElement.cloneNode(true);var toolbar=clone.querySelector(".print-toolbar");if(toolbar)toolbar.remove();if(!document.body.classList.contains("print-source")){var source=clone.querySelector(".source-note");if(source)source.remove();}var script=clone.querySelector("script");if(script)script.remove();var html="<!DOCTYPE html>\\n"+clone.outerHTML;var blob=new Blob([html],{type:"text/html;charset=utf-8"});var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="expediente_'+escapeHtml(String(exp.codigo||codigoOriginal)).replace(/[^a-zA-Z0-9_-]+/g,"_")+'_texto.html";document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);}</script>';
     htm+='</body></html>';
     htm = limpiarTextoExportable(htm);
     var blob=new Blob([htm],{type:'text/html;charset=utf-8'});
     if (!blob || !blob.size) {
-      logPdfExportDiagnostics(codigo, d._export_source || "refetch", d, ent, {ok:false,message:"blob vacio"}, blob);
+      logPdfExportDiagnostics(codigoOriginal, d._export_source || "refetch", d, ent, {ok:false,message:"blob vacio"}, blob);
       alert("No se pudo exportar PDF final. El archivo generado está vacío.");
       return;
     }
-    logPdfExportDiagnostics(codigo, d._export_source || "refetch", d, ent, validation, blob);
+    logPdfExportDiagnostics(codigoOriginal, d._export_source || "refetch", d, ent, validation, blob);
     var url=URL.createObjectURL(blob);
     var w=window.open(url,'_blank');
     if(!w){
@@ -1785,14 +1956,29 @@ window.exportarExpediente = async function(codigo, btnEl) {
 };
 
 window.exportarCSV = function(codigo, btnEl) {
+  var codigoOriginalCsv = normalizarCodigo(codigo || "");
   var btn = btnEl || null, orig = btn ? btn.innerHTML : "";
   if (!ensureAdminToken()) {
     alert("La sesión administrativa no está disponible. Inicia sesión nuevamente antes de exportar.");
     return;
   }
+  if (!codigoOriginalCsv || !codigoOriginalCsv.startsWith("EXP-")) {
+    alert("Código de expediente inválido para exportar CSV: " + (codigo || "(vacío)"));
+    return;
+  }
   if (btn) { btn.innerHTML='Exportando...'; btn.disabled=true; }
-  postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
+  postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigoOriginalCsv})
   .then(function(d){
+    if (!d.ok && esSesionExpirada(d)) {
+      handleSesionExpirada();
+      alert("La sesión de administrador expiró. Inicia sesión nuevamente.");
+      return;
+    }
+    var codigoRecibidoCsv = normalizarCodigo(d.expediente || {});
+    if (d.ok && codigoRecibidoCsv && codigoRecibidoCsv !== codigoOriginalCsv) {
+      alert("Error de sincronización: el backend devolvió un expediente diferente al solicitado.");
+      return;
+    }
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
     var rows = collectExportRows(d);
     var separator = ';';
@@ -1805,7 +1991,7 @@ window.exportarCSV = function(codigo, btnEl) {
       ].join(separator);
     });
     var csv='sep='+separator+String.fromCharCode(13,10)+header.join(separator)+String.fromCharCode(13,10)+body.join(String.fromCharCode(13,10));
-    downloadCsvFile('expediente_'+codigo+'.csv', csv);
+    downloadCsvFile('expediente_'+codigoOriginalCsv+'.csv', csv);
   }).catch(function(e){alert('Error CSV: '+e.message);})
   .finally(function(){ if (btn) { btn.innerHTML=orig; btn.disabled=false; } });
 };
@@ -1829,8 +2015,8 @@ async function loadClienteResumen() {
 
     // Llamadas en paralelo: expedientes + configuración empresa
     const [resExp, resCfg] = await Promise.all([
-      postJson(WEBHOOK_ADMIN, { accion: 'listar_expedientes', rol: appState.rol }, token),
-      postJson(WEBHOOK_ADMIN, { accion: 'get_configuracion_empresa', rol: appState.rol }, token)
+      postJson(WEBHOOK_ADMIN, { accion: 'listar_expedientes', rol: appState.rol }),
+      postJson(WEBHOOK_ADMIN, { accion: 'get_configuracion_empresa', rol: appState.rol })
     ]);
 
     // ── Datos de empresa ──────────────────────────────────────────
