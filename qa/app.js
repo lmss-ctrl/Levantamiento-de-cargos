@@ -1123,6 +1123,11 @@ window.generarEntregableExpediente = async function(codigo, btnEl) {
     if (!res || !res.ok) {
       throw new Error(res && (res.error_qa || res.mensaje || res.estado_generacion_qa) || "sin detalle");
     }
+    var fresh = await fetchExpedienteCompletoForExport(codigo, "refetch_post_generate", 4);
+    appState.expedientesCompletosCache = appState.expedientesCompletosCache || {};
+    appState.expedientesCompletosCache[codigo] = fresh;
+    var ent = normalizeEntregablesForExport(fresh.entregables || {}, fresh);
+    logPdfExportDiagnostics(codigo, "refetch_post_generate", fresh, ent, null, null);
     alert("Entregables generados para " + codigo + ".");
     await loadExpedientes();
   } catch (e) {
@@ -1173,6 +1178,11 @@ window.generarEntregablesFinalizados = async function(btnEl) {
         fail++;
         errores.push(exp.codigo + ": " + (res && (res.error_qa || res.mensaje || res.estado_generacion_qa) || "sin detalle"));
       }
+      if (res && res.ok) {
+        var fresh = await fetchExpedienteCompletoForExport(exp.codigo, "refetch_post_batch_generate", 3);
+        appState.expedientesCompletosCache = appState.expedientesCompletosCache || {};
+        appState.expedientesCompletosCache[exp.codigo] = fresh;
+      }
     } catch (e) {
       fail++;
       errores.push(exp.codigo + ": " + e.message);
@@ -1187,9 +1197,72 @@ window.generarEntregablesFinalizados = async function(btnEl) {
 };
 
 function normalizeEntregablesForExport(entregables) {
+  var rawArgs = Array.prototype.slice.call(arguments);
+  var sources = [];
+  rawArgs.forEach(function(src) {
+    if (!src || typeof src !== "object") return;
+    sources.push(src);
+    ["entregables", "entregables_qa", "qa_entregables", "ultimo_entregable_qa", "latest_qa", "qa", "expediente"].forEach(function(key) {
+      if (src[key] && typeof src[key] === "object") sources.push(src[key]);
+    });
+  });
   var ent = Object.assign({}, entregables || {});
-  if (!ent.manual_cargo && ent.manual_de_cargo) ent.manual_cargo = ent.manual_de_cargo;
-  if (!ent.perfil_seleccion && ent.perfil_de_seleccion) ent.perfil_seleccion = ent.perfil_de_seleccion;
+  var aliases = {
+    perfil_seleccion: ["perfil_de_seleccion", "perfil_seleccion", "Perfil de selección", "Perfil de Selección"],
+    manual_cargo: ["manual_de_cargo", "manual_cargo", "Manual de cargo", "Manual de Cargo"],
+    kpis_sugeridos: ["kpis_sugeridos", "indicadores", "KPIs sugeridos", "KPIs Sugeridos"],
+    hallazgos_optimizacion: ["hallazgos_optimizacion", "Hallazgos de optimización", "Hallazgos de Optimización"],
+    recomendaciones_finales: ["recomendaciones_finales", "Recomendaciones finales", "Recomendaciones Finales"],
+    matriz_funciones_responsabilidades: ["matriz_funciones_responsabilidades", "Matriz funciones y responsabilidades", "Matriz de Funciones y Responsabilidades"],
+    raci_basico: ["raci_basico", "RACI básico", "RACI Básico"],
+    analisis_carga_tiempos: ["analisis_carga_tiempos", "Análisis de carga y tiempos", "Analisis de carga y tiempos"],
+    contraste_mejores_practicas: ["contraste_mejores_practicas", "Contraste con mejores prácticas", "Contraste con Mejores Prácticas"]
+  };
+  function normKey(key) {
+    return String(key || "")
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+  }
+  function asText(value) {
+    if (value == null) return "";
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+    if (Array.isArray(value)) return value.map(asText).filter(Boolean).join("\n");
+    if (typeof value === "object") {
+      if (value.plain_text) return String(value.plain_text);
+      if (value.text && value.text.content) return String(value.text.content);
+      if (Array.isArray(value.rich_text)) return value.rich_text.map(asText).filter(Boolean).join("");
+      if (Array.isArray(value.title)) return value.title.map(asText).filter(Boolean).join("");
+      if (value.content) return asText(value.content);
+      if (value.value) return asText(value.value);
+    }
+    return "";
+  }
+  function findByAliases(aliasList) {
+    var wanted = {};
+    aliasList.forEach(function(alias){ wanted[normKey(alias)] = true; });
+    for (var s = 0; s < sources.length; s++) {
+      var src = sources[s] || {};
+      for (var key in src) {
+        if (Object.prototype.hasOwnProperty.call(src, key) && wanted[normKey(key)]) {
+          var text = asText(src[key]).trim();
+          if (text) return text;
+        }
+      }
+    }
+    return "";
+  }
+  Object.keys(aliases).forEach(function(canonical) {
+    var current = String(ent[canonical] || "").trim();
+    var found = current || findByAliases(aliases[canonical]);
+    if (found) ent[canonical] = found;
+  });
+  ent.manual_de_cargo = ent.manual_de_cargo || ent.manual_cargo || "";
+  ent.manual_cargo = ent.manual_cargo || ent.manual_de_cargo || "";
+  ent.perfil_de_seleccion = ent.perfil_de_seleccion || ent.perfil_seleccion || "";
+  ent.perfil_seleccion = ent.perfil_seleccion || ent.perfil_de_seleccion || "";
+  ent.indicadores = ent.indicadores || ent.kpis_sugeridos || "";
   return ent;
 }
 
@@ -1206,16 +1279,18 @@ var PDF_SECTION_ORDER = [
 ];
 
 function validateExpedientePrintPayload(exp, ent, resp) {
+  var diagnostics = getExportSectionDiagnostics(ent);
   var missing = PDF_SECTION_ORDER.filter(function(key) {
-    return !String(ent[key] || "").trim();
+    return !diagnostics[key] || !diagnostics[key].present;
   });
-  if (missing.length) {
-    return { ok: false, message: "No se puede exportar PDF final. Faltan secciones: " + missing.map(entregableLabel).join(", ") };
+  var presentCount = PDF_SECTION_ORDER.length - missing.length;
+  if (!presentCount) {
+    return { ok: false, message: "No se puede exportar PDF final. Ninguna sección de entregables tiene contenido útil." };
   }
   var respuestas = normalizeResponseItems(resp);
-  if (!respuestas.length) {
-    return { ok: false, message: "No se puede exportar PDF final. Falta el anexo de preguntas y respuestas." };
-  }
+  var warnings = [];
+  if (missing.length) warnings.push("Secciones no detectadas: " + missing.map(entregableLabel).join(", "));
+  if (!respuestas.length) warnings.push("No se detectó anexo de preguntas y respuestas.");
   var visibleValues = [];
   Object.keys(exp || {}).forEach(function(key) {
     if (exp[key] || exp[key] === 0 || exp[key] === false) visibleValues.push(exp[key]);
@@ -1227,13 +1302,73 @@ function validateExpedientePrintPayload(exp, ent, resp) {
   if (hasBadLiteral) {
     return { ok: false, message: "No se puede exportar PDF final. Hay valores técnicos sin resolver en el contenido." };
   }
-  return { ok: true, respuestas: respuestas };
+  return { ok: true, respuestas: respuestas, warnings: warnings };
+}
+
+function hasMeaningfulSectionContent(value) {
+  var text = String(value || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[#*_`|>\-–—=\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 100;
+}
+
+function getExportSectionDiagnostics(ent) {
+  var result = {};
+  PDF_SECTION_ORDER.forEach(function(key) {
+    var value = String(ent[key] || "");
+    result[key] = {
+      length: value.trim().length,
+      present: hasMeaningfulSectionContent(value)
+    };
+  });
+  return result;
+}
+
+function logPdfExportDiagnostics(codigo, source, data, ent, validation, blob) {
+  var diagnostics = getExportSectionDiagnostics(ent || {});
+  var missing = Object.keys(diagnostics).filter(function(key){ return !diagnostics[key].present; });
+  console.info("[PDF export]", {
+    codigo_expediente: codigo,
+    fuente_datos: source,
+    webhook_status: data && (data.estado_generacion_qa || data.status || data.ok),
+    secciones: diagnostics,
+    secciones_faltantes_reales: missing.map(entregableLabel),
+    blob_size: blob ? blob.size : 0
+  });
+  if (validation && !validation.ok) console.warn("[PDF export] validacion", validation.message);
+}
+
+async function fetchExpedienteCompletoForExport(codigo, source, retries) {
+  var lastData = null;
+  for (var attempt = 0; attempt <= (retries || 0); attempt++) {
+    var data = await postJson(WEBHOOK_ADMIN, {accion:"get_expediente_completo", codigo_expediente:codigo, _ts:Date.now()});
+    lastData = data;
+    var ent = normalizeEntregablesForExport(data.entregables || {}, data);
+    var diagnostics = getExportSectionDiagnostics(ent);
+    var presentCount = Object.keys(diagnostics).filter(function(key){ return diagnostics[key].present; }).length;
+    console.info("[PDF export] refetch", {
+      codigo_expediente: codigo,
+      fuente_datos: source || "refetch",
+      intento: attempt + 1,
+      secciones_presentes: presentCount,
+      secciones: diagnostics
+    });
+    if (presentCount > 0 || attempt === (retries || 0)) {
+      data.entregables = ent;
+      data._export_source = source || "refetch";
+      return data;
+    }
+    await sleep(1500);
+  }
+  return lastData;
 }
 
 function collectExportRows(data) {
   var rows = [];
   var exp = data.expediente || {};
-  var ent = normalizeEntregablesForExport(data.entregables || {});
+  var ent = normalizeEntregablesForExport(data.entregables || {}, data);
   var resp = data.respuestas || [];
   var seenResponseKeys = {};
   var canonicalEntKeys = [
@@ -1455,20 +1590,28 @@ function entregableLabel(key) {
   return labels[key] || key.replace(/_/g, " ").replace(/\b\w/g, function(c){ return c.toUpperCase(); });
 }
 
-window.exportarExpediente = function(codigo, btnEl) {
+window.exportarExpediente = async function(codigo, btnEl) {
   var btn = btnEl || null, orig = btn ? btn.innerHTML : "";
   if (!ensureAdminToken()) {
     alert("La sesión administrativa no está disponible. Inicia sesión nuevamente antes de exportar.");
     return;
   }
+  if (!codigo) {
+    alert("No se puede exportar PDF final. Falta codigo_expediente.");
+    return;
+  }
   if (btn) { btn.innerHTML = 'Procesando...'; btn.disabled = true; }
-  postJson(WEBHOOK_ADMIN,{accion:'get_expediente_completo',codigo_expediente:codigo})
-  .then(function(d){
+  try {
+    var d = await fetchExpedienteCompletoForExport(codigo, "refetch", 2);
     if(!d.ok){alert(d.mensaje||'Error al obtener expediente.');return;}
-    var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{}),resp=d.respuestas||[];
+    var exp=d.expediente||{},ent=normalizeEntregablesForExport(d.entregables||{}, d),resp=d.respuestas||[];
     var fuenteQa=d.fuente_entregable_qa||{};
     var validation = validateExpedientePrintPayload(exp, ent, resp);
-    if (!validation.ok) { alert(validation.message); return; }
+    if (!validation.ok) {
+      logPdfExportDiagnostics(codigo, d._export_source || "refetch", d, ent, validation, null);
+      alert(validation.message);
+      return;
+    }
     var orderedEntKeys = PDF_SECTION_ORDER;
     var now=new Date().toLocaleDateString('es-CO',{year:'numeric',month:'long',day:'numeric'});
     function row(l,v){if(!v&&v!==0)return '';return '<tr><td style="font-weight:600;color:#52525b;width:220px;padding:6px 12px;vertical-align:top">'+escapeHtml(l)+'</td><td style="padding:6px 12px;white-space:pre-wrap">'+escapeHtml(v)+'</td></tr>';}
@@ -1516,6 +1659,12 @@ window.exportarExpediente = function(codigo, btnEl) {
     htm+='<script>function downloadTextHtml(){var clone=document.documentElement.cloneNode(true);var toolbar=clone.querySelector(".print-toolbar");if(toolbar)toolbar.remove();if(!document.body.classList.contains("print-source")){var source=clone.querySelector(".source-note");if(source)source.remove();}var script=clone.querySelector("script");if(script)script.remove();var html="<!DOCTYPE html>\\n"+clone.outerHTML;var blob=new Blob([html],{type:"text/html;charset=utf-8"});var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="expediente_'+escapeHtml(String(exp.codigo||codigo)).replace(/[^a-zA-Z0-9_-]+/g,"_")+'_texto.html";document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);}</script>';
     htm+='</body></html>';
     var blob=new Blob([htm],{type:'text/html;charset=utf-8'});
+    if (!blob || !blob.size) {
+      logPdfExportDiagnostics(codigo, d._export_source || "refetch", d, ent, {ok:false,message:"blob vacio"}, blob);
+      alert("No se pudo exportar PDF final. El archivo generado está vacío.");
+      return;
+    }
+    logPdfExportDiagnostics(codigo, d._export_source || "refetch", d, ent, validation, blob);
     var url=URL.createObjectURL(blob);
     var w=window.open(url,'_blank');
     if(!w){
@@ -1523,8 +1672,15 @@ window.exportarExpediente = function(codigo, btnEl) {
       return;
     }
     setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
-  }).catch(function(e){alert('Error PDF: '+e.message);})
-  .finally(function(){ if (btn) { btn.innerHTML=orig; btn.disabled=false; } });
+    var revision = d.revision_qa || d.qa || d;
+    if (revision && revision.requiere_revision_humana === true) {
+      setTimeout(function(){ alert("Archivo generado correctamente. El expediente requiere revisión antes de entrega final."); }, 250);
+    }
+  } catch(e) {
+    alert('Error PDF: '+e.message);
+  } finally {
+    if (btn) { btn.innerHTML=orig; btn.disabled=false; }
+  }
 };
 
 window.exportarCSV = function(codigo, btnEl) {
