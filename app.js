@@ -367,13 +367,58 @@ function normalizarCodigo(exp) {
   if (typeof exp === "string") {
     raw = exp;
   } else if (typeof exp === "object") {
-    raw = exp.codigo || exp.codigo_expediente || exp.codigoExpediente
+    raw = exp.codigo_expediente || exp.codigoExpediente
        || exp["Código expediente"] || exp["Código expediente  (Auto)"]
-       || exp["Codigo expediente"]  || exp["Codigo expediente  (Auto)"] || "";
+       || exp["Codigo expediente"]  || exp["Codigo expediente  (Auto)"]
+       || exp.codigo || "";
   }
   var str = String(raw || "").trim();
-  var match = str.match(/EXP-\d+/i);
+  var compact = str.replace(/\s+/g, "");
+  var match = compact.match(/EXP-\d+/i);
   return match ? match[0].toUpperCase() : str;
+}
+
+function extraerCodigoRespuesta(data) {
+  if (!data) return "";
+  var exp = data.expediente || data.expediente_qa || data;
+  if (typeof exp === "string") return exp;
+  if (typeof exp !== "object") return "";
+  return exp.codigo_expediente || exp.codigoExpediente
+    || exp["Código expediente"] || exp["Código expediente  (Auto)"]
+    || exp["Codigo expediente"]  || exp["Codigo expediente  (Auto)"]
+    || exp.codigo || "";
+}
+
+function buscarFilaAdminPorCodigo(codigo) {
+  var codigoNorm = normalizarCodigo(codigo);
+  var rows = Array.isArray(appState.expedientesAdmin) ? appState.expedientesAdmin : [];
+  for (var i = 0; i < rows.length; i++) {
+    if (normalizarCodigo(rows[i]) === codigoNorm || normalizarCodigo(rows[i].codigo || "") === codigoNorm) {
+      return rows[i];
+    }
+  }
+  return null;
+}
+
+function logSyncDebugBeforeSend(rowCodigoVisible, codigoPayload, rowCompleta, botonOrigen) {
+  console.log("[SYNC DEBUG BEFORE SEND]", {
+    rowCodigoVisible: rowCodigoVisible,
+    codigoPayload: codigoPayload,
+    rowCompleta: rowCompleta || null,
+    botonOrigen: botonOrigen || ""
+  });
+}
+
+function logSyncDebugAfterResponse(rowCodigoVisible, codigoPayload, responseCodigo, responseCompleta, botonOrigen) {
+  console.log("[SYNC DEBUG AFTER RESPONSE]", {
+    rowCodigoVisible: rowCodigoVisible,
+    codigoPayload: codigoPayload,
+    responseCodigo: responseCodigo,
+    responseCompleta: responseCompleta || null,
+    normalizadoRow: normalizarCodigo(rowCodigoVisible),
+    normalizadoResponse: normalizarCodigo(responseCodigo),
+    botonOrigen: botonOrigen || ""
+  });
 }
 
 // ── Limpiar token de sesión expirada ─────────────────────────────────────────
@@ -1253,14 +1298,22 @@ window.generarEntregableExpediente = async function(codigo, btnEl) {
   }
   if (btn) { btn.innerHTML = "..."; btn.disabled = true; }
   try {
-    var res = await postJson(WEBHOOK_ENTREGABLES, {
+    var payloadGeneracion = {
       codigo_expediente: codigoOriginal,
       database_id_entregables_qa: DATABASE_ID_ENTREGABLES_QA
-    }, 0);
+    };
+    logSyncDebugBeforeSend(codigo, payloadGeneracion.codigo_expediente, {
+      filaAdmin: buscarFilaAdminPorCodigo(codigoOriginal),
+      btnDatasetCodigo: btn && btn.dataset ? btn.dataset.codigo : "",
+      codigoParametro: codigo
+    }, "Gen.");
+    var res = await postJson(WEBHOOK_ENTREGABLES, payloadGeneracion, 0);
+    logSyncDebugAfterResponse(codigo, payloadGeneracion.codigo_expediente, extraerCodigoRespuesta(res), res, "Gen.");
     if (!res || !res.ok) {
       throw new Error(res && (res.error_qa || res.mensaje || res.estado_generacion_qa) || "sin detalle");
     }
     var fresh = await fetchExpedienteCompletoForExport(codigoOriginal, "refetch_post_generate", 4);
+    logSyncDebugAfterResponse(codigo, payloadGeneracion.codigo_expediente, extraerCodigoRespuesta(fresh), fresh, "Gen.refetch_post_generate");
     // Sesión expirada post-generación
     if (!fresh.ok && esSesionExpirada(fresh)) {
       handleSesionExpirada();
@@ -1332,7 +1385,8 @@ window.generarEntregablesFinalizados = async function(btnEl) {
       return {
         codigo: normalizarCodigo(exp),
         nombre: String(exp.nombre || ""),
-        cargo:  String(exp.cargo  || "")
+        cargo:  String(exp.cargo  || ""),
+        rowCompleta: exp
       };
     });
   if (!pendientes.length) {
@@ -1349,10 +1403,13 @@ window.generarEntregablesFinalizados = async function(btnEl) {
     var pendiente = pendientes[i];  // código inmutable, no depende del array original
     if (btn) btn.innerHTML = "Generando " + (i + 1) + "/" + pendientes.length;
     try {
-      var res = await postJson(WEBHOOK_ENTREGABLES, {
+      var payloadBatch = {
         codigo_expediente: pendiente.codigo,
         database_id_entregables_qa: DATABASE_ID_ENTREGABLES_QA
-      }, 0);
+      };
+      logSyncDebugBeforeSend(pendiente.codigo, payloadBatch.codigo_expediente, pendiente.rowCompleta || pendiente, "Generar finalizados 1x1");
+      var res = await postJson(WEBHOOK_ENTREGABLES, payloadBatch, 0);
+      logSyncDebugAfterResponse(pendiente.codigo, payloadBatch.codigo_expediente, extraerCodigoRespuesta(res), res, "Generar finalizados 1x1");
       if (res && res.ok) ok++;
       else {
         // Sesión expirada durante el loop
@@ -1367,6 +1424,7 @@ window.generarEntregablesFinalizados = async function(btnEl) {
       }
       if (res && res.ok) {
         var fresh = await fetchExpedienteCompletoForExport(pendiente.codigo, "refetch_post_batch_generate", 3);
+        logSyncDebugAfterResponse(pendiente.codigo, payloadBatch.codigo_expediente, extraerCodigoRespuesta(fresh), fresh, "Generar finalizados 1x1.refetch_post_batch_generate");
         appState.expedientesCompletosCache = appState.expedientesCompletosCache || {};
         appState.expedientesCompletosCache[pendiente.codigo] = fresh;
       }
@@ -1536,11 +1594,17 @@ async function fetchExpedienteCompletoForExport(codigoSolicitado, source, retrie
   var codigoNorm = normalizarCodigo(codigoSolicitado);
   var lastData = null;
   for (var attempt = 0; attempt <= (retries || 0); attempt++) {
-    var data = await postJson(WEBHOOK_ADMIN, {
+    var payloadRefetch = {
       accion: "get_expediente_completo",
       codigo_expediente: codigoNorm || codigoSolicitado,
       _ts: Date.now()
-    });
+    };
+    logSyncDebugBeforeSend(codigoSolicitado, payloadRefetch.codigo_expediente, {
+      source: source || "refetch",
+      intento: attempt + 1
+    }, "get_expediente_completo");
+    var data = await postJson(WEBHOOK_ADMIN, payloadRefetch);
+    logSyncDebugAfterResponse(codigoSolicitado, payloadRefetch.codigo_expediente, extraerCodigoRespuesta(data), data, "get_expediente_completo");
     lastData = data;
 
     // Corto-circuito en ok:false — no reintentar errores de sesión o datos
