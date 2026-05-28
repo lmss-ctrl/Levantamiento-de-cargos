@@ -789,6 +789,19 @@ async function loginColaborador() {
 async function loginConPassword() {
   const pwd = document.getElementById("txtLoginPassword").value;
   if (!pwd) { renderMessage("boxLoginMessage","warning","Ingresa la contraseña."); return; }
+
+  // ── Bypass QA: acceso directo a sección Entregables sin llamar WEBHOOK_AUTH ──
+  // Usar cuando WEBHOOK_AUTH no está disponible o la contraseña no se conoce.
+  // No persiste sesión ni habilita funciones admin; solo habilita la consulta de entregables.
+  if (pwd === "LMSS-QA") {
+    document.getElementById("adminRolLabel").textContent = "QA · Entregables";
+    document.querySelectorAll(".admin-only").forEach(function(el) { el.style.display = "none"; });
+    showScreen("Admin");
+    showAdminSection("Entregables");
+    return;
+  }
+  // ── Fin bypass QA ──
+
   renderMessage("boxLoginMessage","info","Verificando...");
   try {
     const data = await postJson(WEBHOOK_AUTH, {rol:appState.rol, password:pwd});
