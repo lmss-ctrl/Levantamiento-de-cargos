@@ -3,6 +3,7 @@ const WEBHOOK_AUTH  = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-ca
 const WEBHOOK_ADMIN = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos-admin";
 const WEBHOOK_ENTREGABLES = "https://n8n.lmsmartsolutions.com/webhook/generar-entregables-piloto";
 const WEBHOOK_ENTREGABLE_CONSULTA = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-consulta";
+const ENTREGABLE_EXPORT_HTML_URL  = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-export-html";
 const DATABASE_ID_ENTREGABLES_QA = "35343c8107928084a4dbe48c77dac6e3";
 
 const PHASES = [
@@ -569,6 +570,15 @@ function getEntregableErrorMessage(error) {
   return map[error] || "No fue posible consultar el entregable en este momento.";
 }
 
+function getDocumentalErrorMessage(error) {
+  const map = {
+    entregable_version_id_requerido: "El entregable aun no esta disponible para exportacion documental.",
+    entregable_version_id_invalido:  "El ID de version del entregable no es valido.",
+    entregable_no_encontrado:        "No existe una version documental para el ID solicitado."
+  };
+  return map[error] || "No fue posible cargar la version documental. Intente nuevamente o revise auditoria.";
+}
+
 function extractEntregableInfo(data) {
   const ent = data?.entregables || {};
   const entregableVersionId = String(
@@ -619,10 +629,12 @@ function renderEntregableActions(info) {
   setText("lblEntregableId", data.entregableId || "-");
   setText("lblEntregableVersionAgente", data.versionAgente || "-");
   setText("lblEntregableEstado", data.estadoGeneracion || "-");
-  const btnVer = document.getElementById("btnVerEntregable");
-  const btnCopy = document.getElementById("btnCopiarEntregableId");
-  if (btnVer) btnVer.disabled = !hasVersion;
-  if (btnCopy) btnCopy.disabled = !hasVersion;
+  const btnVer        = document.getElementById("btnVerEntregable");
+  const btnCopy       = document.getElementById("btnCopiarEntregableId");
+  const btnDocumental = document.getElementById("btnDocumental");
+  if (btnVer)        btnVer.disabled        = !hasVersion;
+  if (btnCopy)       btnCopy.disabled       = !hasVersion;
+  if (btnDocumental) btnDocumental.disabled = !hasVersion;
 }
 
 function closeEntregablePreview() {
@@ -630,6 +642,7 @@ function closeEntregablePreview() {
   const iframe = document.getElementById("iframeEntregablePreview");
   if (iframe) iframe.removeAttribute("srcdoc");
   if (box) box.classList.add("hidden");
+  setText("lblVistaActual", "Vista previa del entregable");
   renderMessage("boxEntregableMessage", "", "");
 }
 
@@ -685,11 +698,55 @@ async function consultarEntregable() {
     }
     iframe.setAttribute("srcdoc", data.html_preview);
     box.classList.remove("hidden");
+    setText("lblVistaActual", "Vista previa del entregable");
     renderMessage("boxEntregableMessage", "success", "Entregable consultado correctamente.");
   } catch (e) {
     renderMessage("boxEntregableMessage", "error", "Error tecnico consultando entregable: " + e.message);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Ver entregable"; }
+  }
+}
+
+async function consultarEntregableDocumental() {
+  const id = appState.entregableVersionId || appState.idEntregablePg || "";
+  if (!id) {
+    renderMessage("boxEntregableMessage", "warning", "El entregable aun no esta disponible para exportacion documental.");
+    return;
+  }
+  const btn = document.getElementById("btnDocumental");
+  if (btn) { btn.disabled = true; btn.textContent = "Generando..."; }
+  closeEntregablePreview();
+  renderMessage("boxEntregableMessage", "info", "Generando version documental…");
+  console.log("Consultando version documental", { entregableVersionId: id });
+  try {
+    const numId = isNaN(Number(id)) ? id : Number(id);
+    const data = await postJson(ENTREGABLE_EXPORT_HTML_URL, {
+      entregable_version_id: numId,
+      modo: "QA"
+    }, 0);
+    console.log("Respuesta version documental", data);
+    if (!data.ok) {
+      renderMessage("boxEntregableMessage", "warning", getDocumentalErrorMessage(data.error));
+      return;
+    }
+    const iframe = document.getElementById("iframeEntregablePreview");
+    const box    = document.getElementById("boxEntregablePreview");
+    if (!data.html_export || !iframe || !box) {
+      renderMessage("boxEntregableMessage", "warning", "La version documental no trajo contenido disponible.");
+      return;
+    }
+    iframe.setAttribute("srcdoc", data.html_export);
+    iframe.setAttribute("sandbox", "");
+    iframe.style.minHeight = "800px";
+    box.classList.remove("hidden");
+    setText("lblVistaActual", "Versión documental imprimible");
+    const filenameInfo = data.filename ? " — " + data.filename : "";
+    renderMessage("boxEntregableMessage", "success", "Versión documental cargada correctamente." + filenameInfo);
+  } catch (e) {
+    console.log("Respuesta version documental", { error: e.message });
+    renderMessage("boxEntregableMessage", "error", "No fue posible cargar la version documental. Intente nuevamente o revise auditoria.");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Versión documental"; }
   }
 }
 
