@@ -268,6 +268,41 @@
       </button>
     </div>
     <div id="boxFinalMessage" class="mt-4 hidden"></div>
+
+    <div id="boxEntregableConsulta" class="mt-5 hidden text-left rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+      <div class="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div class="tag text-zinc-400 mb-1">Entregable generado</div>
+          <div class="text-sm text-zinc-700">
+            Version ID: <span id="lblEntregableVersionId" class="mono font-medium text-zinc-900">-</span>
+          </div>
+          <div class="text-xs text-zinc-500 mt-1">
+            Entregable ID: <span id="lblEntregableId" class="mono">-</span>
+            <span class="mx-1">|</span>
+            Agente: <span id="lblEntregableVersionAgente" class="mono">-</span>
+          </div>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <button id="btnVerEntregable" onclick="consultarEntregable()" class="btn-outline-brand" style="padding:8px 14px">
+            Ver entregable
+          </button>
+          <button id="btnCopiarEntregableId" onclick="copyEntregableVersionId()" class="btn-ghost-light" style="padding:8px 14px">
+            Copiar ID version
+          </button>
+        </div>
+      </div>
+      <div id="boxEntregableMessage" class="mt-3 hidden"></div>
+      <div id="boxEntregablePreview" class="mt-4 hidden">
+        <div class="flex items-center justify-between gap-3 mb-2">
+          <div class="tag text-zinc-400">Vista previa del entregable</div>
+          <button onclick="closeEntregablePreview()" class="btn-ghost-light" style="padding:7px 12px">Cerrar vista previa</button>
+        </div>
+        <iframe id="iframeEntregablePreview"
+                title="Vista previa del entregable"
+                sandbox=""
+                style="width:100%; min-height:700px; border:1px solid #e4e4e7; border-radius:14px; background:white"></iframe>
+      </div>
+    </div>
     <div class="powered-by-light">Powered by LM Smart Solutions</div>
   </div>
 </div>

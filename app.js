@@ -2,6 +2,7 @@ const WEBHOOK_URL   = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-ca
 const WEBHOOK_AUTH  = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos-auth";
 const WEBHOOK_ADMIN = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos-admin";
 const WEBHOOK_ENTREGABLES = "https://n8n.lmsmartsolutions.com/webhook/generar-entregables-piloto";
+const WEBHOOK_ENTREGABLE_CONSULTA = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-consulta";
 const DATABASE_ID_ENTREGABLES_QA = "35343c8107928084a4dbe48c77dac6e3";
 
 const PHASES = [
@@ -26,6 +27,7 @@ const appState = {
   preguntaAyuda:"", preguntaTipo:"Texto largo", preguntaOpciones:[],
   progreso:0, estadoExpediente:"", resumenIA:"",
   cargo:"", area:"", jefeInmediato:"", nombreEntrevistado:"", nombreJefeInmediato:"",
+  entregableId:"", entregableVersionId:"", idEntregablePg:"", versionAgente:"",
   _intentoPreguntaActual: 1,
   _respuestaAnteriorActual: ""
 };
@@ -321,7 +323,11 @@ function persistSession() {
     tokenSesion: appState.tokenSesion || "",
     identificadorColaborador: appState.identificadorColaborador || "",
     codigoExpediente: appState.codigoExpediente || "",
-    preguntaActualId: appState.preguntaActualId || ""
+    preguntaActualId: appState.preguntaActualId || "",
+    entregableId: appState.entregableId || "",
+    entregableVersionId: appState.entregableVersionId || "",
+    idEntregablePg: appState.idEntregablePg || "",
+    versionAgente: appState.versionAgente || ""
   });
   try {
     getStorageTargets().forEach(function(store) {
@@ -551,6 +557,125 @@ async function postJson(url, payload, retries) {
     throw new Error(data?.mensaje || ("Error HTTP " + res.status));
   }
   return data;
+}
+
+function getEntregableErrorMessage(error) {
+  const map = {
+    entregable_version_id_requerido: "El entregable aun no esta disponible para consulta.",
+    entregable_version_id_invalido: "El ID de version del entregable no es valido.",
+    entregable_no_encontrado: "No se encontro el entregable generado en PostgreSQL."
+  };
+  return map[error] || "No fue posible consultar el entregable en este momento.";
+}
+
+function extractEntregableInfo(data) {
+  const ent = data?.entregables || {};
+  const entregableVersionId = String(ent.entregable_version_id || ent.id_entregable_pg || "").trim();
+  return {
+    entregableId: String(ent.entregable_id || "").trim(),
+    entregableVersionId,
+    idEntregablePg: String(ent.id_entregable_pg || entregableVersionId || "").trim(),
+    versionAgente: String(ent.version_agente || "").trim(),
+    ok: ent.ok === true || ent.ok === "true"
+  };
+}
+
+function storeEntregableInfo(data) {
+  const info = extractEntregableInfo(data);
+  appState.entregableId = info.entregableId;
+  appState.entregableVersionId = info.entregableVersionId;
+  appState.idEntregablePg = info.idEntregablePg;
+  appState.versionAgente = info.versionAgente;
+  persistSession();
+  renderEntregableActions(info);
+  return info;
+}
+
+function renderEntregableActions(info) {
+  const box = document.getElementById("boxEntregableConsulta");
+  if (!box) return;
+  const data = info || {
+    entregableId: appState.entregableId,
+    entregableVersionId: appState.entregableVersionId,
+    idEntregablePg: appState.idEntregablePg,
+    versionAgente: appState.versionAgente
+  };
+  const hasVersion = !!data.entregableVersionId;
+  box.classList.toggle("hidden", !hasVersion);
+  setText("lblEntregableVersionId", data.entregableVersionId || "-");
+  setText("lblEntregableId", data.entregableId || "-");
+  setText("lblEntregableVersionAgente", data.versionAgente || "-");
+  const btnVer = document.getElementById("btnVerEntregable");
+  const btnCopy = document.getElementById("btnCopiarEntregableId");
+  if (btnVer) btnVer.disabled = !hasVersion;
+  if (btnCopy) btnCopy.disabled = !hasVersion;
+}
+
+function closeEntregablePreview() {
+  const box = document.getElementById("boxEntregablePreview");
+  const iframe = document.getElementById("iframeEntregablePreview");
+  if (iframe) iframe.removeAttribute("srcdoc");
+  if (box) box.classList.add("hidden");
+  renderMessage("boxEntregableMessage", "", "");
+}
+
+function resetEntregableConsulta() {
+  appState.entregableId = "";
+  appState.entregableVersionId = "";
+  appState.idEntregablePg = "";
+  appState.versionAgente = "";
+  closeEntregablePreview();
+  const box = document.getElementById("boxEntregableConsulta");
+  if (box) box.classList.add("hidden");
+}
+
+async function copyEntregableVersionId() {
+  const id = appState.entregableVersionId || appState.idEntregablePg || "";
+  if (!id) {
+    renderMessage("boxEntregableMessage", "warning", "El entregable aun no esta disponible para consulta.");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(id);
+    renderMessage("boxEntregableMessage", "success", "ID de version copiado.");
+  } catch {
+    renderMessage("boxEntregableMessage", "info", "ID de version: " + id);
+  }
+}
+
+async function consultarEntregable() {
+  const id = appState.entregableVersionId || appState.idEntregablePg || "";
+  if (!id) {
+    renderMessage("boxEntregableMessage", "warning", "El entregable aun no esta disponible para consulta.");
+    return;
+  }
+  const btn = document.getElementById("btnVerEntregable");
+  if (btn) { btn.disabled = true; btn.textContent = "Consultando..."; }
+  closeEntregablePreview();
+  renderMessage("boxEntregableMessage", "info", "Consultando entregable...");
+  try {
+    const data = await postJson(WEBHOOK_ENTREGABLE_CONSULTA, {
+      entregable_version_id: id,
+      modo: "QA"
+    }, 0);
+    if (!data.ok) {
+      renderMessage("boxEntregableMessage", "warning", getEntregableErrorMessage(data.error));
+      return;
+    }
+    const iframe = document.getElementById("iframeEntregablePreview");
+    const box = document.getElementById("boxEntregablePreview");
+    if (!data.html_preview || !iframe || !box) {
+      renderMessage("boxEntregableMessage", "warning", "El entregable no trae vista previa disponible.");
+      return;
+    }
+    iframe.setAttribute("srcdoc", data.html_preview);
+    box.classList.remove("hidden");
+    renderMessage("boxEntregableMessage", "success", "Entregable consultado correctamente.");
+  } catch (e) {
+    renderMessage("boxEntregableMessage", "error", "Error tecnico consultando entregable: " + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Ver entregable"; }
+  }
 }
 
 /* ── Role selection ── */
@@ -1042,6 +1167,7 @@ async function submitAnswer() {
     });
     if (data.ok && data.estado==="listo_para_cierre") {
       clearDraft();
+      resetEntregableConsulta();
       appState.progreso = Number(data.progreso||100);
       setText("txtFinalMessage", data.mensaje || "La entrevista ha terminado.");
       showScreen("Final"); return;
@@ -1144,7 +1270,11 @@ async function closeExpediente() {
       {codigo_expediente:appState.codigoExpediente, accion:"cerrar_expediente"});
     if (data.ok) {
       clearDraft();
+      const info = storeEntregableInfo(data);
       renderMessage("boxFinalMessage","success", data.mensaje||"Expediente cerrado.");
+      if (data.entregables?.solicitados && !info.entregableVersionId) {
+        renderMessage("boxFinalMessage","warning","Expediente cerrado. El entregable aun no esta disponible para consulta.");
+      }
     }
     else renderMessage("boxFinalMessage","error", data.mensaje||"No se pudo cerrar.");
   } catch(e) { renderMessage("boxFinalMessage","error","Error: "+e.message); }
@@ -1157,7 +1287,8 @@ function goBackToStart() {
     preguntaActualId:"",preguntaActualTexto:"",preguntaAyuda:"",
     preguntaTipo:"Texto largo",preguntaOpciones:[],progreso:0,
     estadoExpediente:"",cargo:"",area:"",jefeInmediato:"",nombreEntrevistado:"",
-    nombreJefeInmediato:"",resumenIA:"",faseActual:""
+    nombreJefeInmediato:"",resumenIA:"",faseActual:"",
+    entregableId:"",entregableVersionId:"",idEntregablePg:"",versionAgente:""
   });
   ["txtLoginCedula","txtLoginPassword","txtRespuesta"].forEach(id => {
     const el=document.getElementById(id); if(el) el.value="";
