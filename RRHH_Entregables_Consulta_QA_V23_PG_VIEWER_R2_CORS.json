@@ -1,0 +1,189 @@
+{
+  "name": "RRHH_Entregables_Consulta_QA_V23_PG_VIEWER",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rrhh-entregable-consulta",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://lmss-ctrl.github.io"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-1000, 0],
+      "id": "806416dc-2781-437b-a983-aa047a1b518c",
+      "name": "Webhook - Consultar Entregable"
+    },
+    {
+      "parameters": {
+        "jsCode": "// R2-CORS: Detectar preflight OPTIONS por cabecera estándar.\n// Los preflights SIEMPRE incluyen Access-Control-Request-Method.\n// Los POST normales nunca lo incluyen.\nconst wb = $json || {};\nconst headers = wb.headers || {};\nconst acrm = headers['access-control-request-method']\n           || headers['Access-Control-Request-Method']\n           || '';\nconst isOptions = acrm.trim() !== '';\nreturn [{ json: { ...wb, _isOptions: isOptions } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-760, 0],
+      "id": "c1a2b3d4-e5f6-7890-abcd-ef1234560001",
+      "name": "Code - Detectar Método"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._isOptions }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [-520, 0],
+      "id": "d1e2f3a4-b5c6-7890-1234-abcdef560002",
+      "name": "IF - Es OPTIONS"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "",
+        "options": {
+          "responseCode": 204,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Access-Control-Allow-Origin",  "value": "https://lmss-ctrl.github.io" },
+              { "name": "Access-Control-Allow-Methods", "value": "POST, OPTIONS" },
+              { "name": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" },
+              { "name": "Access-Control-Max-Age",       "value": "86400" }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [-280, -180],
+      "id": "f1a2b3c4-d5e6-7890-abcd-1234ef560003",
+      "name": "Respond - CORS Preflight 204"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json || {};\nconst raw = body.entregable_version_id;\nconst modo = String(body.modo || 'QA').trim() || 'QA';\n\nlet ok = true;\nlet error = '';\nlet id = null;\n\nif (raw === undefined || raw === null || String(raw).trim() === '') {\n  ok = false;\n  error = 'entregable_version_id_requerido';\n} else if (!/^\\d+$/.test(String(raw).trim())) {\n  ok = false;\n  error = 'entregable_version_id_invalido';\n} else {\n  id = Number(String(raw).trim());\n  if (!Number.isSafeInteger(id) || id <= 0) {\n    ok = false;\n    error = 'entregable_version_id_invalido';\n    id = null;\n  }\n}\n\nreturn [{\n  json: {\n    ok_input: ok,\n    error_input: error,\n    entregable_version_id: id,\n    entregable_version_id_sql: ok ? String(id) : '-1',\n    modo\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-280, 180],
+      "id": "01c16fb2-54fe-4e65-a9d8-883cc4564bbd",
+      "name": "Code - Validar Input Consulta"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH input AS (\n  SELECT {{ $json.entregable_version_id_sql }}::bigint AS entregable_version_id\n), found AS (\n  SELECT\n    jsonb_build_object(\n      'entregable_version_id', ev.entregable_version_id,\n      'entregable_id', ev.entregable_id,\n      'codigo_expediente', en.codigo_expediente,\n      'estado_expediente', e.estado_expediente,\n      'pregunta_actual_id', e.pregunta_actual_id,\n      'progreso_pct', e.progreso_pct,\n      'version', ev.version,\n      'version_generador', ev.version_generador,\n      'fecha_generacion', ev.fecha_generacion,\n      'estado_qa_resumido', ev.estado_qa_resumido,\n      'calidad_general', ev.calidad_general,\n      'apto_para_entrega', ev.apto_para_entrega,\n      'requiere_revision_humana', ev.requiere_revision_humana,\n      'nivel_revision_humana', ev.nivel_revision_humana,\n      'objeto_estandar_json', ev.objeto_estandar_json,\n      'ficha_analitica_json', ev.ficha_analitica_json,\n      'revision_qa_json', ev.revision_qa_json,\n      'parse_errors', COALESCE(ev.parse_errors, '[]'::jsonb),\n      'created_at', ev.created_at\n    ) AS data\n  FROM rrhh.entregable_versiones ev\n  JOIN rrhh.entregables en ON en.entregable_id = ev.entregable_id\n  JOIN rrhh.expedientes e ON e.codigo_expediente = en.codigo_expediente\n  JOIN input i ON i.entregable_version_id = ev.entregable_version_id\n  LIMIT 1\n)\nSELECT\n  (found.data IS NOT NULL) AS encontrado,\n  found.data AS data,\n  (SELECT entregable_version_id FROM input) AS entregable_version_id_solicitado\nFROM input\nLEFT JOIN found ON true;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-40, 180],
+      "id": "f6ae2547-764f-49a6-893f-4c8c3e3cf42a",
+      "name": "PG - Leer Entregable Version",
+      "credentials": {
+        "postgres": {
+          "id": "CTA9kuEFYJMfAcS3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const validacion = $('Code - Validar Input Consulta').first().json || {};\nconst row = $json || {};\nconst data = row.data && typeof row.data === 'object' ? row.data : null;\n\nfunction esc(value) {\n  return String(value == null ? '' : value)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#39;');\n}\nfunction asArray(value) {\n  if (Array.isArray(value)) return value;\n  if (value == null || value === '') return [];\n  return [value];\n}\nfunction text(value) {\n  if (value == null) return '';\n  if (typeof value === 'string') return value;\n  if (typeof value === 'number' || typeof value === 'boolean') return String(value);\n  return JSON.stringify(value);\n}\nfunction list(items) {\n  const arr = asArray(items).map(x => `<li>${esc(text(x))}</li>`).join('');\n  return arr ? `<ul>${arr}</ul>` : '<p class=\"muted\">Sin datos registrados.</p>';\n}\nfunction section(title, body) {\n  return `<section><h2>${esc(title)}</h2>${body}</section>`;\n}\nfunction compactJsonBlock(obj) {\n  if (!obj || typeof obj !== 'object') return '<p class=\"muted\">Sin datos registrados.</p>';\n  const entries = Object.entries(obj).slice(0, 8).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(text(v)).slice(0, 600)}</dd>`).join('');\n  return entries ? `<dl>${entries}</dl>` : '<p class=\"muted\">Sin datos registrados.</p>';\n}\n\nif (validacion.ok_input !== true) {\n  return [{ json: {\n    ok: false,\n    error: validacion.error_input || 'entregable_version_id_invalido',\n    entregable_version_id: validacion.entregable_version_id || null,\n    mensaje: validacion.error_input === 'entregable_version_id_requerido'\n      ? 'Debe enviar entregable_version_id.'\n      : 'entregable_version_id debe ser numerico.'\n  } }];\n}\n\nif (!data) {\n  return [{ json: {\n    ok: false,\n    error: 'entregable_no_encontrado',\n    entregable_version_id: validacion.entregable_version_id,\n    mensaje: 'No existe una version de entregable con el ID solicitado.'\n  } }];\n}\n\nconst objeto = data.objeto_estandar_json || {};\nconst ficha = data.ficha_analitica_json || {};\nconst revision = data.revision_qa_json || {};\nconst cargo = objeto.cargo || {};\nconst tituloCargo = cargo.nombre || ficha.cargo || ficha.nombre_cargo || objeto.cargo_nombre || 'Entregable RRHH';\nconst alertas = asArray(objeto.alertas_vacios).concat(asArray(revision.alertas));\n\nconst html = `<!doctype html>\n<html lang=\"es\">\n<head>\n<meta charset=\"utf-8\">\n<title>${esc(tituloCargo)} - ${esc(data.codigo_expediente)}</title>\n<style>\n  body { font-family: Arial, sans-serif; color: #1f2933; line-height: 1.45; margin: 24px; }\n  header { border-bottom: 2px solid #d9e2ec; margin-bottom: 18px; padding-bottom: 12px; }\n  h1 { font-size: 24px; margin: 0 0 6px; }\n  h2 { font-size: 17px; border-bottom: 1px solid #e4e7eb; padding-bottom: 4px; margin-top: 20px; }\n  .meta { color: #52606d; font-size: 13px; }\n  .badge { display: inline-block; padding: 3px 8px; border-radius: 4px; background: #e0f2fe; color: #075985; font-size: 12px; margin-right: 6px; }\n  .muted { color: #7b8794; }\n  ul { margin-top: 6px; }\n  dl { display: grid; grid-template-columns: 180px 1fr; gap: 6px 12px; }\n  dt { font-weight: bold; color: #334e68; }\n  dd { margin: 0; }\n  section { break-inside: avoid; }\n</style>\n</head>\n<body>\n<header>\n  <h1>${esc(tituloCargo)}</h1>\n  <div class=\"meta\">\n    <span class=\"badge\">${esc(data.version || '')}</span>\n    <span class=\"badge\">${esc(data.estado_qa_resumido || '')}</span>\n    Expediente: ${esc(data.codigo_expediente || '')} | Version ID: ${esc(data.entregable_version_id || '')}\n  </div>\n</header>\n${section('Proposito', `<p>${esc(objeto.proposito || ficha.proposito || 'Sin proposito registrado.')}</p>`)}\n${section('Funciones clave', list(objeto.funciones_clave))}\n${section('Responsabilidades', list(objeto.responsabilidades))}\n${section('Alertas y vacios', list(alertas))}\n${section('Observaciones QA', `<p>${esc(objeto.observaciones_qa || revision.resumen || revision.observaciones || 'Sin observaciones QA registradas.')}</p>`)}\n${section('Ficha analitica resumida', compactJsonBlock(ficha))}\n${section('Revision QA resumida', compactJsonBlock(revision))}\n</body>\n</html>`;\n\nreturn [{ json: {\n  ok: true,\n  entregable_version_id: data.entregable_version_id,\n  entregable_id: data.entregable_id,\n  codigo_expediente: data.codigo_expediente,\n  estado_expediente: data.estado_expediente,\n  pregunta_actual_id: data.pregunta_actual_id,\n  progreso_pct: data.progreso_pct,\n  version: data.version,\n  version_generador: data.version_generador,\n  fecha_generacion: data.fecha_generacion,\n  estado_qa_resumido: data.estado_qa_resumido,\n  calidad_general: data.calidad_general,\n  apto_para_entrega: data.apto_para_entrega,\n  requiere_revision_humana: data.requiere_revision_humana,\n  nivel_revision_humana: data.nivel_revision_humana,\n  parse_errors: data.parse_errors || [],\n  objeto_estandar: objeto,\n  ficha_analitica: ficha,\n  revision_qa: revision,\n  html_preview: html\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 180],
+      "id": "6da29e7f-fff8-4c7a-8d5f-bf5d5128fc6d",
+      "name": "Code - Preparar Respuesta Entregable"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Access-Control-Allow-Origin",  "value": "https://lmss-ctrl.github.io" },
+              { "name": "Access-Control-Allow-Methods", "value": "POST, OPTIONS" },
+              { "name": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [440, 180],
+      "id": "d2227ee3-57ad-471c-b6c5-a8f65d9aa984",
+      "name": "Respond - Entregable Consultado"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Consultar Entregable": {
+      "main": [
+        [
+          { "node": "Code - Detectar Método", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code - Detectar Método": {
+      "main": [
+        [
+          { "node": "IF - Es OPTIONS", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "IF - Es OPTIONS": {
+      "main": [
+        [
+          { "node": "Respond - CORS Preflight 204", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Code - Validar Input Consulta", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code - Validar Input Consulta": {
+      "main": [
+        [
+          { "node": "PG - Leer Entregable Version", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "PG - Leer Entregable Version": {
+      "main": [
+        [
+          { "node": "Code - Preparar Respuesta Entregable", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code - Preparar Respuesta Entregable": {
+      "main": [
+        [
+          { "node": "Respond - Entregable Consultado", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Respond - CORS Preflight 204": {},
+    "Respond - Entregable Consultado": {}
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "9a3b5c7d-e1f2-4890-bcde-f09876543210",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "lmss-n8n-prod"
+  },
+  "id": "",
+  "tags": []
+}
