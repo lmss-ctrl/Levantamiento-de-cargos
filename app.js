@@ -27,7 +27,7 @@ const appState = {
   preguntaAyuda:"", preguntaTipo:"Texto largo", preguntaOpciones:[],
   progreso:0, estadoExpediente:"", resumenIA:"",
   cargo:"", area:"", jefeInmediato:"", nombreEntrevistado:"", nombreJefeInmediato:"",
-  entregableId:"", entregableVersionId:"", idEntregablePg:"", versionAgente:"",
+  entregableId:"", entregableVersionId:"", idEntregablePg:"", versionAgente:"", estadoGeneracion:"",
   _intentoPreguntaActual: 1,
   _respuestaAnteriorActual: ""
 };
@@ -327,7 +327,8 @@ function persistSession() {
     entregableId: appState.entregableId || "",
     entregableVersionId: appState.entregableVersionId || "",
     idEntregablePg: appState.idEntregablePg || "",
-    versionAgente: appState.versionAgente || ""
+    versionAgente: appState.versionAgente || "",
+    estadoGeneracion: appState.estadoGeneracion || ""
   });
   try {
     getStorageTargets().forEach(function(store) {
@@ -570,13 +571,23 @@ function getEntregableErrorMessage(error) {
 
 function extractEntregableInfo(data) {
   const ent = data?.entregables || {};
-  const entregableVersionId = String(ent.entregable_version_id || ent.id_entregable_pg || "").trim();
+  const entregableVersionId = String(
+    ent.entregable_version_id ||
+    ent.id_entregable_pg ||
+    data?.entregable_version_id ||
+    data?.id_entregable_pg ||
+    ""
+  ).trim();
+  const entregableId = String(
+    ent.entregable_id || data?.entregable_id || ""
+  ).trim();
   return {
-    entregableId: String(ent.entregable_id || "").trim(),
+    entregableId,
     entregableVersionId,
     idEntregablePg: String(ent.id_entregable_pg || entregableVersionId || "").trim(),
-    versionAgente: String(ent.version_agente || "").trim(),
-    ok: ent.ok === true || ent.ok === "true"
+    versionAgente: String(ent.version_agente || data?.version_agente || "").trim(),
+    estadoGeneracion: String(ent.estado_generacion || data?.estado_generacion || "").trim(),
+    ok: !!(ent.ok === true || ent.ok === "true" || entregableVersionId)
   };
 }
 
@@ -586,6 +597,7 @@ function storeEntregableInfo(data) {
   appState.entregableVersionId = info.entregableVersionId;
   appState.idEntregablePg = info.idEntregablePg;
   appState.versionAgente = info.versionAgente;
+  appState.estadoGeneracion = info.estadoGeneracion;
   persistSession();
   renderEntregableActions(info);
   return info;
@@ -598,13 +610,15 @@ function renderEntregableActions(info) {
     entregableId: appState.entregableId,
     entregableVersionId: appState.entregableVersionId,
     idEntregablePg: appState.idEntregablePg,
-    versionAgente: appState.versionAgente
+    versionAgente: appState.versionAgente,
+    estadoGeneracion: appState.estadoGeneracion || ""
   };
   const hasVersion = !!data.entregableVersionId;
   box.classList.toggle("hidden", !hasVersion);
   setText("lblEntregableVersionId", data.entregableVersionId || "-");
   setText("lblEntregableId", data.entregableId || "-");
   setText("lblEntregableVersionAgente", data.versionAgente || "-");
+  setText("lblEntregableEstado", data.estadoGeneracion || "-");
   const btnVer = document.getElementById("btnVerEntregable");
   const btnCopy = document.getElementById("btnCopiarEntregableId");
   if (btnVer) btnVer.disabled = !hasVersion;
@@ -624,6 +638,7 @@ function resetEntregableConsulta() {
   appState.entregableVersionId = "";
   appState.idEntregablePg = "";
   appState.versionAgente = "";
+  appState.estadoGeneracion = "";
   closeEntregablePreview();
   const box = document.getElementById("boxEntregableConsulta");
   if (box) box.classList.add("hidden");
@@ -655,7 +670,7 @@ async function consultarEntregable() {
   renderMessage("boxEntregableMessage", "info", "Consultando entregable...");
   try {
     const data = await postJson(WEBHOOK_ENTREGABLE_CONSULTA, {
-      entregable_version_id: id,
+      entregable_version_id: isNaN(Number(id)) ? id : Number(id),
       modo: "QA"
     }, 0);
     if (!data.ok) {
@@ -1268,12 +1283,14 @@ async function closeExpediente() {
   try {
     const data = await postJson(WEBHOOK_URL,
       {codigo_expediente:appState.codigoExpediente, accion:"cerrar_expediente"});
+    console.log("Respuesta cierre expediente", data);
     if (data.ok) {
       clearDraft();
       const info = storeEntregableInfo(data);
+      console.log("Entregables detectados", info);
       renderMessage("boxFinalMessage","success", data.mensaje||"Expediente cerrado.");
-      if (data.entregables?.solicitados && !info.entregableVersionId) {
-        renderMessage("boxFinalMessage","warning","Expediente cerrado. El entregable aun no esta disponible para consulta.");
+      if (!info.entregableVersionId) {
+        renderMessage("boxFinalMessage","warning","Expediente cerrado correctamente. El entregable no fue devuelto por la respuesta de cierre. Consulte auditoria o intente recargar.");
       }
     }
     else renderMessage("boxFinalMessage","error", data.mensaje||"No se pudo cerrar.");
@@ -1288,7 +1305,7 @@ function goBackToStart() {
     preguntaTipo:"Texto largo",preguntaOpciones:[],progreso:0,
     estadoExpediente:"",cargo:"",area:"",jefeInmediato:"",nombreEntrevistado:"",
     nombreJefeInmediato:"",resumenIA:"",faseActual:"",
-    entregableId:"",entregableVersionId:"",idEntregablePg:"",versionAgente:""
+    entregableId:"",entregableVersionId:"",idEntregablePg:"",versionAgente:"",estadoGeneracion:""
   });
   ["txtLoginCedula","txtLoginPassword","txtRespuesta"].forEach(id => {
     const el=document.getElementById(id); if(el) el.value="";
