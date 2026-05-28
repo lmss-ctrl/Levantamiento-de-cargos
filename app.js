@@ -810,7 +810,7 @@ async function loginConPassword() {
 }
 
 /* ── Admin sections ── */
-const SECTIONS = ["Dashboard","Expedientes","Empresa","Accesos"];
+const SECTIONS = ["Dashboard","Expedientes","Empresa","Accesos","Entregables"];
 function showAdminSection(name) {
   SECTIONS.forEach(s => {
     const sec = document.getElementById("section"+s);
@@ -2376,6 +2376,85 @@ async function loadClienteResumen() {
       msgBox.classList.remove('hidden');
     }
   }
+}
+
+/* ── Consulta manual de entregable (Admin/Consultor QA) ── */
+async function consultarEntregablePorVersionId(tipo) {
+  const input  = document.getElementById("txtConsultaEntregableVersionId");
+  const msgBox = "boxConsultaEntregableMsg";
+  const raw    = (input ? input.value : "").trim();
+
+  if (!raw) {
+    renderMessage(msgBox, "warning", "Ingresa un Version ID valido.");
+    return;
+  }
+  const numId = Number(raw);
+  if (!Number.isInteger(numId) || numId <= 0) {
+    renderMessage(msgBox, "warning", "Ingresa un Version ID valido (entero positivo).");
+    return;
+  }
+
+  cerrarConsultaEntregable();
+  renderMessage(msgBox, "info",
+    tipo === "documental" ? "Generando version documental…" : "Consultando entregable…");
+  console.log("Consulta manual entregable", { tipo, entregableVersionId: numId });
+
+  try {
+    const endpoint = tipo === "documental"
+      ? ENTREGABLE_EXPORT_HTML_URL
+      : WEBHOOK_ENTREGABLE_CONSULTA;
+    const data = await postJson(endpoint, {
+      entregable_version_id: numId,
+      modo: "QA"
+    }, 0);
+    console.log("Respuesta consulta manual entregable", data);
+
+    if (!data.ok) {
+      const msg = tipo === "documental"
+        ? getDocumentalErrorMessage(data.error)
+        : getEntregableErrorMessage(data.error);
+      renderMessage(msgBox, "warning", msg);
+      return;
+    }
+
+    const htmlContent = tipo === "documental" ? data.html_export : data.html_preview;
+    if (!htmlContent) {
+      renderMessage(msgBox, "warning", "El servidor no devolvio contenido HTML para mostrar.");
+      return;
+    }
+
+    const iframe = document.getElementById("iframeConsultaEntregable");
+    const box    = document.getElementById("boxConsultaEntregablePreview");
+    if (!iframe || !box) return;
+
+    iframe.setAttribute("srcdoc", htmlContent);
+    iframe.setAttribute("sandbox", "");
+    iframe.style.minHeight = "800px";
+    box.classList.remove("hidden");
+
+    setText("lblConsultaVista",
+      tipo === "documental" ? "Versión documental imprimible" : "Vista previa del entregable");
+
+    const extra = (tipo === "documental" && data.filename) ? " — " + data.filename : "";
+    renderMessage(msgBox, "success",
+      tipo === "documental"
+        ? "Versión documental cargada correctamente." + extra
+        : "Entregable consultado correctamente.");
+
+  } catch (e) {
+    console.log("Respuesta consulta manual entregable", { error: e.message });
+    renderMessage(msgBox, "error",
+      "No fue posible cargar el entregable. Intente nuevamente o revise auditoria.");
+  }
+}
+
+function cerrarConsultaEntregable() {
+  const iframe = document.getElementById("iframeConsultaEntregable");
+  const box    = document.getElementById("boxConsultaEntregablePreview");
+  if (iframe) iframe.removeAttribute("srcdoc");
+  if (box)    box.classList.add("hidden");
+  setText("lblConsultaVista", "Vista previa");
+  renderMessage("boxConsultaEntregableMsg", "", "");
 }
 
 // Patch de showAdminSection para incluir sección Cliente

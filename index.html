@@ -369,6 +369,14 @@
       Accesos
     </button>
 
+    <button class="admin-nav-btn" id="navEntregables" onclick="showAdminSection('Entregables')">
+      <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+        <rect x="1.5" y="2.5" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.1"/>
+        <path d="M4.5 5.5h6M4.5 7.5h6M4.5 9.5h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+      </svg>
+      Entregables
+    </button>
+
     <div class="flex-1"></div>
 
     <hr class="divider" />
@@ -660,6 +668,51 @@
         <p class="mt-4 text-xs text-zinc-400 leading-relaxed">
           Las contraseñas se almacenan en variables de entorno del servidor, no en Notion.
         </p>
+      </div>
+    </div>
+
+    <!-- ENTREGABLES QA -->
+    <div id="sectionEntregables" class="hidden fade-up">
+      <div class="mb-6">
+        <h1 class="text-xl font-semibold text-zinc-900">Consulta de entregable generado</h1>
+        <p class="text-sm text-zinc-500 mt-1">Consulta un entregable ya generado usando su Version ID. Disponible para Admin y Consultor.</p>
+      </div>
+      <div class="card p-6 max-w-2xl">
+        <div class="space-y-4">
+          <div>
+            <label class="form-label">Version ID del entregable</label>
+            <input id="txtConsultaEntregableVersionId"
+                   type="number" min="1" step="1"
+                   class="input-light"
+                   placeholder="Ej. 320"
+                   style="max-width:220px"
+                   onkeydown="if(event.key==='Enter') consultarEntregablePorVersionId('preview')" />
+          </div>
+          <div class="flex gap-2 flex-wrap">
+            <button onclick="consultarEntregablePorVersionId('preview')"
+                    class="btn-outline-brand" style="padding:9px 18px">
+              Ver preview
+            </button>
+            <button onclick="consultarEntregablePorVersionId('documental')"
+                    class="btn-ghost-light" style="padding:9px 18px">
+              Ver versión documental
+            </button>
+            <button onclick="cerrarConsultaEntregable()"
+                    class="btn-ghost-light" style="padding:9px 18px">
+              Cerrar vista
+            </button>
+          </div>
+          <div id="boxConsultaEntregableMsg" class="hidden"></div>
+          <div id="boxConsultaEntregablePreview" class="hidden">
+            <div class="flex items-center justify-between gap-3 mb-2">
+              <div id="lblConsultaVista" class="tag text-zinc-400">Vista previa</div>
+            </div>
+            <iframe id="iframeConsultaEntregable"
+                    title="Consulta de entregable"
+                    sandbox=""
+                    style="width:100%; min-height:800px; border:1px solid #e4e4e7; border-radius:14px; background:white"></iframe>
+          </div>
+        </div>
       </div>
     </div>
 
