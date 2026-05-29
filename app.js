@@ -5,6 +5,7 @@ const WEBHOOK_ENTREGABLES = "https://n8n.lmsmartsolutions.com/webhook/generar-en
 const WEBHOOK_ENTREGABLE_CONSULTA = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-consulta";
 const ENTREGABLE_EXPORT_HTML_URL      = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-export-html";
 const ENTREGABLE_EXPORT_HTML_V24B_URL = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-export-html-v24b";
+const ENTREGABLE_EXPORT_HTML_V24C_URL = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-export-html-v24c-r2";
 const DATABASE_ID_ENTREGABLES_QA = "35343c8107928084a4dbe48c77dac6e3";
 
 const PHASES = [
@@ -2428,7 +2429,7 @@ async function consultarEntregablePorVersionId(tipo) {
     const endpoint = tipo === "documental"
       ? ENTREGABLE_EXPORT_HTML_URL
       : tipo === "auditado"
-      ? ENTREGABLE_EXPORT_HTML_V24B_URL
+      ? ENTREGABLE_EXPORT_HTML_V24C_URL
       : WEBHOOK_ENTREGABLE_CONSULTA;
     const data = await postJson(endpoint, {
       entregable_version_id: numId,
