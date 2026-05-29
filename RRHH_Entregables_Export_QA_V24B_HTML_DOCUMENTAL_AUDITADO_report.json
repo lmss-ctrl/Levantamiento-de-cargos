@@ -1,0 +1,171 @@
+{
+  "reporte": {
+    "workflow": "RRHH_Entregables_Export_QA_V24B_HTML_DOCUMENTAL_AUDITADO",
+    "version": "V24B_r1",
+    "fecha": "2026-05-28",
+    "base": "RRHH_Entregables_Export_QA_V24A_HTML_DOCUMENTAL_R5",
+    "autor": "Claude (Anthropic) — LMSS / Levantamiento de Cargos"
+  },
+
+  "endpoint": {
+    "metodo": "POST",
+    "path": "/webhook/rrhh-entregable-export-html-v24b",
+    "url_completa": "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-export-html-v24b",
+    "body_ejemplo": { "entregable_version_id": 320, "modo": "QA" }
+  },
+
+  "nodos": [
+    { "nombre": "Webhook_POST_ExportHTMLV24B",   "tipo": "webhook",          "nota": "POST + allowedOrigins para CORS/OPTIONS automático" },
+    { "nombre": "Code_ValidarEntrada",            "tipo": "code",             "nota": "Idéntico a R5; devuelve validated/invalid sin throw" },
+    { "nombre": "PG_LeerEntregableVersion",       "tipo": "postgres",         "nota": "SELECT + UNION ALL sentinel; idéntico al de R5" },
+    { "nombre": "PG_LeerRespuestasEntrevista",    "tipo": "postgres",         "nota": "SELECT P&R + pyr_found sentinel; idéntico al de R5" },
+    { "nombre": "Code_BuildHTMLAuditado",         "tipo": "code",             "nota": "NUEVO — scoring + semáforo + brechas + HTML auditado" },
+    { "nombre": "Respond_JSON",                   "tipo": "respondToWebhook", "nota": "200 + Content-Type + CORS headers" }
+  ],
+
+  "sql_utilizado": {
+    "query_principal": {
+      "tipo": "SELECT — read-only",
+      "patron": "CTE + UNION ALL sentinel — garantiza siempre una fila (found=true/false)",
+      "tablas": ["rrhh.entregable_versiones","rrhh.entregables","rrhh.expedientes","rrhh.vw_payload_ia_entregable_canonico"],
+      "nota": "Mismo SQL que R5 — esquema PostgreSQL validado 2026-05-28"
+    },
+    "query_pyr": {
+      "tipo": "SELECT — read-only",
+      "patron": "CTE + UNION ALL sentinel (pyr_found=true/false)",
+      "tablas": ["rrhh.respuestas_entrevista","rrhh.entregables","rrhh.entregable_versiones"],
+      "nota": "Mismo SQL que R5"
+    }
+  },
+
+  "scoring_determinístico": {
+    "descripcion": "17 criterios con pesos; score = suma_pesos_presentes / suma_pesos_total × 100",
+    "total_peso": 23,
+    "criterios": [
+      { "id": "proposito",            "label": "Propósito del cargo",                "peso": 2, "fuente": "objeto.proposito || ficha.proposito" },
+      { "id": "funciones_clave",      "label": "Funciones clave",                     "peso": 2, "fuente": "objeto.funciones_clave || ficha.funciones_clave" },
+      { "id": "responsabilidades",    "label": "Responsabilidades",                   "peso": 2, "fuente": "objeto.responsabilidades || ficha.responsabilidades" },
+      { "id": "perfil_estudios",      "label": "Perfil: estudios / formación",        "peso": 1, "fuente": "perfil.estudios || perfil.formacion" },
+      { "id": "perfil_experiencia",   "label": "Perfil: experiencia",                 "peso": 1, "fuente": "perfil.experiencia" },
+      { "id": "perfil_competencias",  "label": "Perfil: competencias",                "peso": 1, "fuente": "perfil.competencias" },
+      { "id": "perfil_herramientas",  "label": "Perfil: herramientas / sistemas",     "peso": 1, "fuente": "perfil.herramientas || perfil.sistemas" },
+      { "id": "perfil_conocimientos", "label": "Perfil: conocimientos técnicos",      "peso": 1, "fuente": "perfil.conocimientos" },
+      { "id": "indicadores",          "label": "Indicadores sugeridos (KPIs)",        "peso": 2, "fuente": "objeto.indicadores_sugeridos || ficha.indicadores_sugeridos" },
+      { "id": "mejoras",              "label": "Mejoras identificadas",               "peso": 1, "fuente": "difMej.mejoras" },
+      { "id": "reprocesos",           "label": "Reprocesos identificados",            "peso": 1, "fuente": "difMej.reprocesos" },
+      { "id": "dificultades",         "label": "Dificultades específicas",            "peso": 1, "fuente": "difMej.dificultades" },
+      { "id": "relaciones_internas",  "label": "Relaciones internas del cargo",       "peso": 1, "fuente": "relacs.internas" },
+      { "id": "tiempos_frecuencias",  "label": "Tiempos: frecuencias",               "peso": 1, "fuente": "tiempos.frecuencias" },
+      { "id": "tiempos_actividades",  "label": "Tiempos: actividades mayor carga",   "peso": 1, "fuente": "tiempos.actividades_mayor_tiempo" },
+      { "id": "alertas_vacios",       "label": "Alertas y vacíos documentados",      "peso": 1, "fuente": "objeto.alertas_vacios" },
+      { "id": "pyr",                  "label": "Preguntas y Respuestas de entrevista","peso": 2, "fuente": "pyrRows.length > 0" }
+    ],
+    "presencia_detectada": "hasVal(value) && (Array.isArray ? length>0 : String(value).trim().length>2)"
+  },
+
+  "estado_documental": {
+    "reglas_en_orden": [
+      { "estado": "APTO_ENTREGA",     "condicion": "apto_para_entrega===true AND !requiere_revision_humana", "color": "#2e7d32" },
+      { "estado": "APTO_REVISION",    "condicion": "tieneBase AND tieneResp AND (perfilAlguno OR indicadores) AND !faltanCriticos", "color": "#0288d1" },
+      { "estado": "REQUIERE_REVISION","condicion": "tieneBase AND tieneResp AND (perfilAlguno OR indicadores) AND faltanCriticos, o solo tieneBase", "color": "#ed6c02" },
+      { "estado": "BORRADOR_QA",      "condicion": "!tieneBase (falta propósito o funciones_clave)", "color": "#d32f2f" }
+    ],
+    "faltanCriticos_definicion": "!tieneIndicadores || !tienePerfilAlguno"
+  },
+
+  "respuesta_esperada": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "shape": {
+      "ok": true,
+      "entregable_version_id": 320,
+      "entregable_id": "number",
+      "codigo_expediente": "EXP-XXX",
+      "version": "string",
+      "version_generador": "string",
+      "exportador_version": "V24B_HTML_DOCUMENTAL_AUDITADO",
+      "estado_qa_resumido": "string",
+      "modo": "QA",
+      "generado_el": "ISO 8601",
+      "filename": "entregable_320_EXP-XXX_auditado.html",
+      "score_completitud": "0-100",
+      "estado_documental": "BORRADOR_QA|REQUIERE_REVISION|APTO_REVISION|APTO_ENTREGA",
+      "brechas": [{"campo":"string","label":"string","critico":true}],
+      "parse_errors_detectados": [],
+      "respuestas_count": "number",
+      "html_export": "<!doctype html>..."
+    }
+  },
+
+  "secciones_html": [
+    "s0 — Semáforo documental + score completitud + tabla de estado",
+    "s_brecha — Matriz de brechas (críticas y complementarias)",
+    "s_completitud — Matriz de completitud por sección (17 criterios)",
+    "s_rec — Recomendaciones de revisión humana",
+    "s1 — Identificación del Documento",
+    "s2 — Datos del Expediente",
+    "s3 — Datos del Colaborador",
+    "s4 — Cargo Levantado",
+    "s5 — Revisión QA y Control de Calidad",
+    "s6 — Objeto Estándar (propósito, funciones, responsabilidades, indicadores, alertas)",
+    "s7 — Perfil Requerido del Cargo",
+    "s8 — Dificultades, Mejoras y Reprocesos",
+    "s9 — Relaciones y Carga Laboral",
+    "s10 — Ficha Analítica del Cargo",
+    "s11 — Anexo A: Preguntas y Respuestas de Entrevista",
+    "s12 — Trazabilidad: Errores de Parse"
+  ],
+
+  "diferencias_vs_v24a": {
+    "endpoint": "rrhh-entregable-export-html-v24b (nuevo, no reemplaza V24A)",
+    "html_secciones": "+6 secciones nuevas (s0, s_brecha, s_completitud, s_rec, s7, s8, s9)",
+    "json_response": "+score_completitud, +estado_documental, +brechas",
+    "scoring": "algoritmo determinístico puro — sin IA, sin CDN, sin scripts",
+    "contenido_vacio": "muestra placeholder 'Pendiente de validación' en vez de omitir sección",
+    "cors": "allowedOrigins en webhook + headers en Respond",
+    "v24a_intacto": true
+  },
+
+  "restricciones_cumplidas": {
+    "openai": false,
+    "notion": false,
+    "pdf": false,
+    "docx": false,
+    "insert_db": false,
+    "update_db": false,
+    "delete_db": false,
+    "modifica_v9_4": false,
+    "modifica_v22": false,
+    "modifica_v23": false,
+    "modifica_v24a": false,
+    "modifica_schema_pg": false,
+    "modifica_frontend": false,
+    "script_en_html": false,
+    "cdn_externo": false
+  },
+
+  "qa_checklist": [
+    { "id": "QA-01", "descripcion": "Importar JSON en n8n sin errores de validación",                          "criterio": "6 nodos creados" },
+    { "id": "QA-02", "descripcion": "Credencial PG asignada en ambos nodos postgres",                          "criterio": "Ajustar si difiere de 'LMSS PostgreSQL RRHH'" },
+    { "id": "QA-03", "descripcion": "POST con id=320, modo=QA → ok:true",                                     "criterio": "status 200, ok===true, html_export inicia con '<!doctype html>'" },
+    { "id": "QA-04", "descripcion": "Respuesta incluye score_completitud, estado_documental, brechas",         "criterio": "Todos los campos presentes en el JSON" },
+    { "id": "QA-05", "descripcion": "HTML contiene matriz de brechas",                                         "criterio": "id='s_brecha' presente, ul con brechas o mensaje 'Sin brechas'" },
+    { "id": "QA-06", "descripcion": "HTML contiene score_completitud visible",                                 "criterio": "Porcentaje visible en sec0 y en footer" },
+    { "id": "QA-07", "descripcion": "HTML contiene estado_documental con color semáforo",                      "criterio": "Bloque coloreado en s0" },
+    { "id": "QA-08", "descripcion": "Secciones vacías muestran placeholder, no omiten",                        "criterio": "Texto 'Pendiente de validación' en secciones sin datos" },
+    { "id": "QA-09", "descripcion": "POST con id=999999999 → ok:false, error: entregable_no_encontrado",       "criterio": "Status 200, ok===false" },
+    { "id": "QA-10", "descripcion": "POST sin entregable_version_id → ok:false, error: _requerido",            "criterio": "Mensaje descriptivo" },
+    { "id": "QA-11", "descripcion": "OPTIONS desde https://lmss-ctrl.github.io → 204",                        "criterio": "Access-Control-Allow-Origin presente" },
+    { "id": "QA-12", "descripcion": "HTML sin etiquetas <script>",                                             "criterio": "grep '<script' en html_export devuelve vacío" },
+    { "id": "QA-13", "descripcion": "Cero escrituras DB",                                                      "criterio": "Execution log solo muestra SELECT" },
+    { "id": "QA-14", "descripcion": "V24A sigue activo y funcional en su endpoint original",                   "criterio": "POST /rrhh-entregable-export-html sigue respondiendo" }
+  ],
+
+  "instrucciones_importacion": [
+    "1. n8n → Workflows → Import from file → RRHH_Entregables_Export_QA_V24B_HTML_DOCUMENTAL_AUDITADO.json",
+    "2. En PG_LeerEntregableVersion y PG_LeerRespuestasEntrevista: verificar/cambiar credencial PostgreSQL.",
+    "3. Activar el workflow.",
+    "4. curl -X POST https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-export-html-v24b -H 'Content-Type: application/json' -d '{\"entregable_version_id\": 320, \"modo\": \"QA\"}'",
+    "5. Copiar html_export y abrir en navegador para validar semáforo, matrices y P&R."
+  ]
+}
