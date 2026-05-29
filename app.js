@@ -2463,7 +2463,7 @@ async function consultarEntregablePorVersionId(tipo) {
 
     setText("lblConsultaVista",
       tipo === "documental" ? "Versión documental imprimible"
-      : tipo === "auditado"  ? "Versión auditada documental"
+      : tipo === "auditado"  ? "Documento auditado"
       : "Vista previa del entregable");
 
     let successMsg;
@@ -2471,7 +2471,7 @@ async function consultarEntregablePorVersionId(tipo) {
       const scorePart  = (data.score_completitud != null) ? "Score: " + data.score_completitud + "%" : "";
       const estadoPart = data.estado_documental ? "Estado: " + data.estado_documental : "";
       const details    = [scorePart, estadoPart].filter(Boolean).join(" · ");
-      successMsg = "Versión auditada cargada correctamente." + (details ? " " + details + "." : "");
+      successMsg = "Documento auditado cargado correctamente." + (details ? " " + details + "." : "");
     } else if (tipo === "documental") {
       const extra = data.filename ? " — " + data.filename : "";
       successMsg = "Versión documental cargada correctamente." + extra;
