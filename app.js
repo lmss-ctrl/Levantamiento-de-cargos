@@ -3,7 +3,8 @@ const WEBHOOK_AUTH  = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-ca
 const WEBHOOK_ADMIN = "https://n8n.lmsmartsolutions.com/webhook/levantamiento-cargos-admin";
 const WEBHOOK_ENTREGABLES = "https://n8n.lmsmartsolutions.com/webhook/generar-entregables-piloto";
 const WEBHOOK_ENTREGABLE_CONSULTA = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-consulta";
-const ENTREGABLE_EXPORT_HTML_URL  = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-export-html";
+const ENTREGABLE_EXPORT_HTML_URL      = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-export-html";
+const ENTREGABLE_EXPORT_HTML_V24B_URL = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-export-html-v24b";
 const DATABASE_ID_ENTREGABLES_QA = "35343c8107928084a4dbe48c77dac6e3";
 
 const PHASES = [
@@ -577,6 +578,15 @@ function getDocumentalErrorMessage(error) {
     entregable_no_encontrado:        "No existe una version documental para el ID solicitado."
   };
   return map[error] || "No fue posible cargar la version documental. Intente nuevamente o revise auditoria.";
+}
+
+function getAuditadoErrorMessage(error) {
+  const map = {
+    entregable_version_id_requerido: "El entregable aun no esta disponible para la version auditada.",
+    entregable_version_id_invalido:  "El ID de version del entregable no es valido.",
+    entregable_no_encontrado:        "No existe una version auditada para el ID solicitado."
+  };
+  return map[error] || "No fue posible cargar la version auditada. Intente nuevamente o revise auditoria.";
 }
 
 function extractEntregableInfo(data) {
@@ -2409,12 +2419,16 @@ async function consultarEntregablePorVersionId(tipo) {
 
   cerrarConsultaEntregable();
   renderMessage(msgBox, "info",
-    tipo === "documental" ? "Generando version documental…" : "Consultando entregable…");
+    tipo === "documental" ? "Generando version documental…"
+    : tipo === "auditado"  ? "Cargando versión auditada…"
+    : "Consultando entregable…");
   console.log("Consulta manual entregable", { tipo, entregableVersionId: numId });
 
   try {
     const endpoint = tipo === "documental"
       ? ENTREGABLE_EXPORT_HTML_URL
+      : tipo === "auditado"
+      ? ENTREGABLE_EXPORT_HTML_V24B_URL
       : WEBHOOK_ENTREGABLE_CONSULTA;
     const data = await postJson(endpoint, {
       entregable_version_id: numId,
@@ -2425,12 +2439,14 @@ async function consultarEntregablePorVersionId(tipo) {
     if (!data.ok) {
       const msg = tipo === "documental"
         ? getDocumentalErrorMessage(data.error)
+        : tipo === "auditado"
+        ? getAuditadoErrorMessage(data.error)
         : getEntregableErrorMessage(data.error);
       renderMessage(msgBox, "warning", msg);
       return;
     }
 
-    const htmlContent = tipo === "documental" ? data.html_export : data.html_preview;
+    const htmlContent = tipo === "preview" ? data.html_preview : data.html_export;
     if (!htmlContent) {
       renderMessage(msgBox, "warning", "El servidor no devolvio contenido HTML para mostrar.");
       return;
@@ -2446,13 +2462,23 @@ async function consultarEntregablePorVersionId(tipo) {
     box.classList.remove("hidden");
 
     setText("lblConsultaVista",
-      tipo === "documental" ? "Versión documental imprimible" : "Vista previa del entregable");
+      tipo === "documental" ? "Versión documental imprimible"
+      : tipo === "auditado"  ? "Versión auditada documental"
+      : "Vista previa del entregable");
 
-    const extra = (tipo === "documental" && data.filename) ? " — " + data.filename : "";
-    renderMessage(msgBox, "success",
-      tipo === "documental"
-        ? "Versión documental cargada correctamente." + extra
-        : "Entregable consultado correctamente.");
+    let successMsg;
+    if (tipo === "auditado") {
+      const scorePart  = (data.score_completitud != null) ? "Score: " + data.score_completitud + "%" : "";
+      const estadoPart = data.estado_documental ? "Estado: " + data.estado_documental : "";
+      const details    = [scorePart, estadoPart].filter(Boolean).join(" · ");
+      successMsg = "Versión auditada cargada correctamente." + (details ? " " + details + "." : "");
+    } else if (tipo === "documental") {
+      const extra = data.filename ? " — " + data.filename : "";
+      successMsg = "Versión documental cargada correctamente." + extra;
+    } else {
+      successMsg = "Entregable consultado correctamente.";
+    }
+    renderMessage(msgBox, "success", successMsg);
 
   } catch (e) {
     console.log("Respuesta consulta manual entregable", { error: e.message });
