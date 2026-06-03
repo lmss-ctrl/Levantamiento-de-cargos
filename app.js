@@ -8,6 +8,10 @@ const ENTREGABLE_EXPORT_HTML_V24B_URL = "https://n8n.lmsmartsolutions.com/webhoo
 const ENTREGABLE_EXPORT_HTML_V24C_URL = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-export-html-v24c-r2";
 const DATABASE_ID_ENTREGABLES_QA = "35343c8107928084a4dbe48c77dac6e3";
 
+// ── FIX3A endpoints oficiales (solo lectura/generación documental) ──
+const ENTREGABLE_FIX3A_CONSULTA_URL = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-fix3a-export-consulta";
+const ENTREGABLE_FIX3A_GENERAR_URL  = "https://n8n.lmsmartsolutions.com/webhook/rrhh-entregable-oficial-fix3a-qa-v1";
+
 const PHASES = [
   { label:"Datos básicos",          range:[1,9],   eta:"~3 min" },
   { label:"Objetivo del cargo",     range:[10,12], eta:"~2 min" },
@@ -646,6 +650,13 @@ function renderEntregableActions(info) {
   if (btnVer)        btnVer.disabled        = !hasVersion;
   if (btnCopy)       btnCopy.disabled       = !hasVersion;
   if (btnDocumental) btnDocumental.disabled = !hasVersion;
+
+  // FIX3A: se activan con codigoExpediente (no requieren entregableVersionId)
+  const hasCodigo = !!appState.codigoExpediente;
+  const btnFix3AConsultar = document.getElementById("btnVerUltimoFix3A");
+  const btnFix3AGenerar   = document.getElementById("btnGenerarOficialFix3A");
+  if (btnFix3AConsultar) btnFix3AConsultar.disabled = !hasCodigo;
+  if (btnFix3AGenerar)   btnFix3AGenerar.disabled   = !hasCodigo;
 }
 
 function closeEntregablePreview() {
@@ -759,6 +770,177 @@ async function consultarEntregableDocumental() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Versión documental"; }
   }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// FIX3A — Consultar último export oficial (NO regenera, NO consume IA)
+// Llama: ENTREGABLE_FIX3A_CONSULTA_URL
+// ════════════════════════════════════════════════════════════════════
+async function consultarUltimoEntregableFix3A() {
+  const codigo = appState.codigoExpediente || "";
+  if (!codigo) {
+    renderMessage("boxEntregableMessage", "warning", "No hay expediente activo para consultar.");
+    return;
+  }
+  const btn = document.getElementById("btnVerUltimoFix3A");
+  if (btn) { btn.disabled = true; btn.textContent = "Consultando..."; }
+  closeEntregablePreview();
+  hideFix3AMetadata();
+  renderMessage("boxEntregableMessage", "info", "Consultando último export oficial FIX3A...");
+  try {
+    const data = await postJson(ENTREGABLE_FIX3A_CONSULTA_URL, {
+      codigo_expediente: codigo
+    }, 0);
+    if (!data.ok) {
+      const esSinExport = data.estado_tecnico_exportacion === "sin_export_registrado";
+      if (esSinExport) {
+        renderMessage("boxEntregableMessage", "warning",
+          "No existe un export oficial FIX3A registrado para este expediente. " +
+          "Usa el botón ⋯ Generar oficial FIX3A⋯ para crearlo.");
+      } else {
+        renderMessage("boxEntregableMessage", "error",
+          data.mensaje || "Error al consultar export FIX3A.");
+      }
+      return;
+    }
+    renderEntregableFix3A(data, "consulta");
+  } catch (e) {
+    renderMessage("boxEntregableMessage", "error",
+      "Error técnico al consultar export FIX3A: " + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "↓ Ver último oficial"; }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// FIX3A — Generar / regenerar export oficial (llama orquestador)
+// Llama: ENTREGABLE_FIX3A_GENERAR_URL
+// Inserta registro en rrhh.entregable_exports_fix3a
+// ════════════════════════════════════════════════════════════════════
+async function generarEntregableOficialFix3A() {
+  const codigo = appState.codigoExpediente || "";
+  if (!codigo) {
+    renderMessage("boxEntregableMessage", "warning", "No hay expediente activo para generar.");
+    return;
+  }
+  const confirmado = window.confirm(
+    "Esta acción generará un nuevo export oficial FIX3A para el expediente " + codigo + ".\n\n" +
+    "Se consumirá OpenAI y se registrará en la base de datos.\n\n" +
+    "¿Continuar?"
+  );
+  if (!confirmado) return;
+  const btn = document.getElementById("btnGenerarOficialFix3A");
+  if (btn) { btn.disabled = true; btn.textContent = "Generando..."; }
+  closeEntregablePreview();
+  hideFix3AMetadata();
+  renderMessage("boxEntregableMessage", "info", "Generando export oficial FIX3A... (puede tardar hasta 2 minutos)");
+  try {
+    const data = await postJson(ENTREGABLE_FIX3A_GENERAR_URL, {
+      codigo_expediente: codigo,
+      modo: "QA"
+    }, 0);
+    if (!data.ok) {
+      renderMessage("boxEntregableMessage", "error",
+        data.motivo_bloqueo_release || data.mensaje || "El orquestador FIX3A no aprobó el export.");
+      return;
+    }
+    renderEntregableFix3A(data, "generacion");
+    renderMessage("boxEntregableMessage", "success",
+      "Export oficial FIX3A generado y registrado. Export ID: " + (data.export_id || "-"));
+  } catch (e) {
+    renderMessage("boxEntregableMessage", "error",
+      "Error técnico al generar export FIX3A: " + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "⟳ Generar oficial FIX3A"; }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// FIX3A — Renderizar resultado en iframe + panel de metadata
+// Reutiliza iframeEntregablePreview y boxEntregablePreview existentes
+// ════════════════════════════════════════════════════════════════════
+function renderEntregableFix3A(data, origen) {
+  origen = origen || "desconocido";
+
+  // Mostrar html_export en iframe existente
+  const iframe = document.getElementById("iframeEntregablePreview");
+  const boxPreview = document.getElementById("boxEntregablePreview");
+  if (data.html_export && iframe && boxPreview) {
+    iframe.setAttribute("srcdoc", data.html_export);
+    iframe.setAttribute("sandbox", "");
+    iframe.style.minHeight = "820px";
+    boxPreview.classList.remove("hidden");
+    setText("lblVistaActual",
+      "Entregable oficial FIX3A" +
+      (data.filename ? " — " + data.filename : "") +
+      (origen === "consulta" ? " (cacheado)" : " (recién generado)")
+    );
+  } else if (!data.html_export) {
+    renderMessage("boxEntregableMessage", "warning",
+      "El export FIX3A no trajo html_export. Verifica el estado del orquestador.");
+  }
+
+  // Labels de metadata FIX3A
+  const ESTADO_LABELS = {
+    aprobado_condicionado:              "✓ Aprobado condicionado / revisión interna",
+    requiere_revision_documental:       "⚠ Requiere revisión documental",
+    bloqueado_documental:               "✕ Bloqueado documental"
+  };
+  const NEGOCIO_LABELS = {
+    sin_alertas_negocio_criticas:       "Sin alertas críticas",
+    requiere_validacion:                "Requiere validación",
+    no_evaluable_por_bloqueo_tecnico:   "No evaluable (bloqueo técnico)"
+  };
+  const ALERTA_LABELS = {
+    nivel_operativo_requiere_validacion:    "Nivel requiere validación",
+    raci_accountability_requiere_revision:  "RACI requiere revisión",
+    dictamen_generico_no_calibrado:         "Dictamen no calibrado"
+  };
+
+  setText("lblFix3AExportId",   String(data.export_id || "-"));
+  setText("lblFix3AEstadoDoc",  ESTADO_LABELS[data.estado_documental_visible]  || data.estado_documental_visible  || "-");
+  setText("lblFix3AEstadoNeg",  NEGOCIO_LABELS[data.estado_negocio]            || data.estado_negocio            || "-");
+  setText("lblFix3AUsoPerm",    data.uso_permitido || "-");
+  setText("lblFix3ASha256",     data.html_sha256 ? data.html_sha256.slice(0, 24) + "..." : "-");
+
+  const alertas = Array.isArray(data.alertas_negocio) ? data.alertas_negocio : [];
+  const boxAlertas = document.getElementById("boxFix3AAlertas");
+  const lblAlertas = document.getElementById("lblFix3AAlertas");
+  if (boxAlertas && lblAlertas) {
+    if (alertas.length > 0) {
+      const etiquetas = alertas.map(function(a) {
+        return ALERTA_LABELS[a] || a;
+      }).join(" · ");
+      lblAlertas.textContent = etiquetas;
+      boxAlertas.classList.remove("hidden");
+    } else {
+      boxAlertas.classList.add("hidden");
+    }
+  }
+
+  // Mostrar panel de metadata FIX3A
+  const boxMeta = document.getElementById("boxFix3AMetadata");
+  if (boxMeta) boxMeta.classList.remove("hidden");
+
+  // Log para trazabilidad
+  console.log("[FIX3A]", {
+    origen: origen,
+    export_id: data.export_id,
+    estado_tecnico: data.estado_tecnico_exportacion,
+    estado_documental: data.estado_documental_visible,
+    estado_negocio: data.estado_negocio,
+    alertas_negocio: alertas,
+    html_length: data.html_length,
+    html_sha256: data.html_sha256
+  });
+}
+
+// FIX3A helper: ocultar panel de metadata
+function hideFix3AMetadata() {
+  const boxMeta = document.getElementById("boxFix3AMetadata");
+  if (boxMeta) boxMeta.classList.add("hidden");
+  const boxAlertas = document.getElementById("boxFix3AAlertas");
+  if (boxAlertas) boxAlertas.classList.add("hidden");
 }
 
 /* ── Role selection ── */
